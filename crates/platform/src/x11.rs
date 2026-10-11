@@ -31,6 +31,7 @@ x11rb::atom_manager! {
     Atoms: AtomsCookie {
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
+        WM_CHANGE_STATE,
         UTF8_STRING,
         _NET_WM_NAME,
         _MOTIF_WM_HINTS,
@@ -527,6 +528,21 @@ impl Platform for X11Platform {
         } else {
             self.conn.unmap_window(id.0).conn()?;
         }
+        Ok(())
+    }
+
+    fn minimize(&mut self, id: WindowId) -> Result<()> {
+        self.check(id)?;
+        // ICCCM: ask the window manager for IconicState (3).
+        let msg = ClientMessageEvent::new(32, id.0, self.atoms.WM_CHANGE_STATE, [3u32, 0, 0, 0, 0]);
+        self.conn
+            .send_event(
+                false,
+                self.root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                msg,
+            )
+            .conn()?;
         Ok(())
     }
 

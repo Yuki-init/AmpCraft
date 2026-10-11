@@ -98,6 +98,18 @@ impl Skin {
         })
     }
 
+    /// Builds a skin from already decoded sheets, with default text settings. For skins
+    /// generated in code and for tests.
+    pub fn from_sheets(sheets: impl IntoIterator<Item = (Sheet, Bitmap)>) -> Self {
+        Self {
+            sheets: sheets.into_iter().collect(),
+            playlist_style: PlaylistStyle::default(),
+            vis_colors: config::DEFAULT_VIS_COLORS,
+            regions: Regions::default(),
+            warnings: Vec::new(),
+        }
+    }
+
     pub fn sheet(&self, sheet: Sheet) -> Option<&Bitmap> {
         self.sheets.get(&sheet)
     }

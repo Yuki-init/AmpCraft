@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxcursor-dev libxi-dev libxcb-shape0-dev libxcb-render0-dev libxcb-xfixes0-dev \
         xvfb xauth openbox xdotool x11-utils imagemagick \
         libsqlite3-dev \
+        fontconfig fonts-dejavu-core fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 # Route the ALSA default device to the null plugin so audio tests never touch hardware.

@@ -123,6 +123,8 @@ pub trait Platform {
     /// Moves the window's top-left corner to `pos` in desktop coordinates.
     fn move_window(&mut self, id: WindowId, pos: Point) -> Result<()>;
     fn resize_window(&mut self, id: WindowId, size: Size) -> Result<()>;
+    /// Iconifies the window.
+    fn minimize(&mut self, id: WindowId) -> Result<()>;
     /// Draws a full frame of `size.w * size.h` pixels at the window's top-left.
     fn present(&mut self, id: WindowId, size: Size, pixels: &[u32]) -> Result<()>;
     /// Restricts the window's visible and clickable area to `rects` (window coordinates).

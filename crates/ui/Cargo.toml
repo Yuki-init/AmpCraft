@@ -11,3 +11,4 @@ workspace = true
 
 [dependencies]
 amp-dock = { version = "0.1.0", path = "../dock" }
+amp-skin = { version = "0.1.0", path = "../skin" }

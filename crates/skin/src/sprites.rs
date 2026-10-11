@@ -126,6 +126,11 @@ pub mod main {
     pub const UNSHADE_PRESSED: Sprite = s(Titlebar, 9, 27, 9, 9);
     pub const CLUTTER_BAR: Sprite = s(Titlebar, 304, 0, 8, 43);
     pub const CLUTTER_BAR_DISABLED: Sprite = s(Titlebar, 312, 0, 8, 43);
+    pub const CLUTTER_O_ON: Sprite = s(Titlebar, 304, 47, 8, 8);
+    pub const CLUTTER_A_ON: Sprite = s(Titlebar, 312, 55, 8, 7);
+    pub const CLUTTER_I_ON: Sprite = s(Titlebar, 320, 62, 8, 7);
+    pub const CLUTTER_D_ON: Sprite = s(Titlebar, 328, 69, 8, 8);
+    pub const CLUTTER_V_ON: Sprite = s(Titlebar, 336, 77, 8, 7);
     pub const SHADE_POSITION_BACKGROUND: Sprite = s(Titlebar, 0, 36, 17, 7);
     pub const SHADE_POSITION_THUMB: Sprite = s(Titlebar, 20, 36, 3, 7);
     pub const SHADE_POSITION_THUMB_LEFT: Sprite = s(Titlebar, 17, 36, 3, 7);
@@ -200,6 +205,11 @@ pub mod main {
         UNSHADE_PRESSED,
         CLUTTER_BAR,
         CLUTTER_BAR_DISABLED,
+        CLUTTER_O_ON,
+        CLUTTER_A_ON,
+        CLUTTER_I_ON,
+        CLUTTER_D_ON,
+        CLUTTER_V_ON,
         SHADE_POSITION_BACKGROUND,
         SHADE_POSITION_THUMB,
         SHADE_POSITION_THUMB_LEFT,

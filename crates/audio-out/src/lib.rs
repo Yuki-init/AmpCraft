@@ -196,6 +196,27 @@ impl OutputDevice {
         Self::from_device(devices.swap_remove(index))
     }
 
+    /// Opens `name` if given; otherwise the default output, falling back to the sound
+    /// servers' own ALSA devices (`pipewire`, then `pulse`) when the default cannot be opened,
+    /// which happens on Linux when ALSA's default goes straight to hardware a server holds.
+    pub fn open(name: Option<&str>) -> Result<Self> {
+        if let Some(n) = name {
+            return Self::named(n);
+        }
+        match Self::default_output() {
+            Ok(d) => Ok(d),
+            Err(default_err) => {
+                for fallback in ["pipewire", "pulse"] {
+                    if let Ok(d) = Self::named(fallback) {
+                        log::info!("default device unusable ({default_err}), using {fallback}");
+                        return Ok(d);
+                    }
+                }
+                Err(default_err)
+            }
+        }
+    }
+
     fn from_device(device: cpal::Device) -> Result<Self> {
         let default = device.default_output_config()?;
         let rate = default.sample_rate();

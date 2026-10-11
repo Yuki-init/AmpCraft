@@ -13,13 +13,13 @@ use std::fs::File;
 use std::io::{BufRead, BufWriter, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use amp_audio_out::{Controls, OutputDevice};
+use amp_app::null_sink::NullSink;
+use amp_audio_out::OutputDevice;
 use amp_core::wav::{WavFormat, write_wav};
-use amp_core::{Decoder, OUTPUT_CHANNELS, PcmSource, PlaybackState, Player, PlayerConfig, Repeat};
+use amp_core::{Decoder, OUTPUT_CHANNELS, PlaybackState, Player, PlayerConfig, Repeat};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -93,7 +93,7 @@ enum RepeatArg {
 }
 
 fn main() -> Result<()> {
-    StderrLogger::install();
+    amp_app::logging::install();
     match Cli::parse().command {
         Cmd::Probe { files } => probe(&files),
         Cmd::Devices => {
@@ -208,18 +208,7 @@ enum Input {
 /// Keeps the sink alive for the duration of playback.
 enum SinkHandle {
     Device(#[allow(dead_code)] amp_audio_out::AudioOutput),
-    Thread(Arc<AtomicBool>, Option<std::thread::JoinHandle<()>>),
-}
-
-impl Drop for SinkHandle {
-    fn drop(&mut self) {
-        if let SinkHandle::Thread(stop, handle) = self {
-            stop.store(true, Ordering::Relaxed);
-            if let Some(h) = handle.take() {
-                let _ = h.join();
-            }
-        }
-    }
+    Null(#[allow(dead_code)] NullSink),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -238,7 +227,10 @@ fn play(
     }
     let controls;
     let device = match sink {
-        Sink::Device => Some(open_device(device_name.as_deref())?),
+        Sink::Device => Some(
+            OutputDevice::open(device_name.as_deref())
+                .context("opening audio device (see `devices`)")?,
+        ),
         _ => None,
     };
     let rate = device.as_ref().map_or(44_100, OutputDevice::sample_rate);
@@ -264,11 +256,9 @@ fn play(
             SinkHandle::Device(out)
         }
         None => {
-            controls = Arc::new(Controls::default());
-            let stop = Arc::new(AtomicBool::new(false));
-            let realtime = matches!(sink, Sink::Null);
-            let handle = spawn_null_sink(source, Arc::clone(&stop), realtime)?;
-            SinkHandle::Thread(stop, Some(handle))
+            let sink = NullSink::start(source, matches!(sink, Sink::Null))?;
+            controls = Arc::clone(sink.controls());
+            SinkHandle::Null(sink)
         }
     };
     controls.set_volume(f32::from(volume.min(100)) / 100.0);
@@ -356,56 +346,7 @@ fn play(
     Ok(())
 }
 
-/// Opens the named device, or the default one. If the default is unusable (common on Linux
-/// when ALSA's default goes straight to hardware a sound server holds), tries the sound
-/// servers' own ALSA devices.
-fn open_device(name: Option<&str>) -> Result<OutputDevice> {
-    if let Some(n) = name {
-        return OutputDevice::named(n).context("opening audio device (see `devices`)");
-    }
-    match OutputDevice::default_output() {
-        Ok(d) => Ok(d),
-        Err(default_err) => {
-            for fallback in ["pipewire", "pulse"] {
-                if let Ok(d) = OutputDevice::named(fallback) {
-                    log::info!("default device unusable ({default_err}), using {fallback}");
-                    return Ok(d);
-                }
-            }
-            Err(default_err).context("opening default audio device (see `devices`)")
-        }
-    }
-}
-
 /// Pulls audio and throws it away, either at real-time pace or as fast as possible.
-fn spawn_null_sink(
-    mut source: PcmSource,
-    stop: Arc<AtomicBool>,
-    realtime: bool,
-) -> Result<std::thread::JoinHandle<()>> {
-    let rate = source.sample_rate();
-    let handle = std::thread::Builder::new()
-        .name("null-sink".into())
-        .spawn(move || {
-            let period = Duration::from_millis(10);
-            let frames = (rate as usize / 100).max(1);
-            let mut buf = vec![0.0f32; frames * OUTPUT_CHANNELS];
-            let mut next = Instant::now();
-            while !stop.load(Ordering::Relaxed) {
-                let n = source.fill(&mut buf);
-                if realtime {
-                    next += period;
-                    if let Some(wait) = next.checked_duration_since(Instant::now()) {
-                        std::thread::sleep(wait);
-                    }
-                } else if n == 0 {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-            }
-        })?;
-    Ok(handle)
-}
-
 fn spawn_stdin_reader() -> mpsc::Receiver<Input> {
     let (tx, rx) = mpsc::channel();
     // Detached on purpose: a blocking stdin read cannot be interrupted, and the process exits
@@ -472,35 +413,6 @@ fn clock(d: Duration) -> String {
     } else {
         format!("{:02}:{:02}", s / 60, s % 60)
     }
-}
-
-/// Minimal logger: level from `OPENAMP_LOG` (error, warn, info, debug, trace), default warn.
-struct StderrLogger;
-
-impl StderrLogger {
-    fn install() {
-        let level = std::env::var("OPENAMP_LOG")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(log::LevelFilter::Warn);
-        if log::set_logger(&StderrLogger).is_ok() {
-            log::set_max_level(level);
-        }
-    }
-}
-
-impl log::Log for StderrLogger {
-    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.level() <= log::max_level()
-    }
-
-    fn log(&self, record: &log::Record<'_>) {
-        if self.enabled(record.metadata()) {
-            eprintln!("[{}] {}", record.level(), record.args());
-        }
-    }
-
-    fn flush(&self) {}
 }
 
 #[cfg(test)]
