@@ -129,6 +129,7 @@ fn main() -> Result<()> {
             title: title.into(),
             rect,
             kind,
+            owner: None,
         })?;
         let id = PanelId(i as u32 + 1);
         layout.insert(id, rect);

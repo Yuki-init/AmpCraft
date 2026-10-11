@@ -517,6 +517,18 @@ impl Platform for X11Platform {
         wm_hints.input = Some(true);
         wm_hints.set(&*self.conn, id).conn()?;
         self.set_motif_and_type(id, spec.kind)?;
+        if let Some(owner) = spec.owner {
+            self.check(owner)?;
+            self.conn
+                .change_property32(
+                    PropMode::REPLACE,
+                    id,
+                    AtomEnum::WM_TRANSIENT_FOR,
+                    AtomEnum::WINDOW,
+                    &[owner.0],
+                )
+                .conn()?;
+        }
 
         self.windows.insert(id, Size::new(r.w, r.h));
         Ok(WindowId(id))
@@ -549,6 +561,19 @@ impl Platform for X11Platform {
                 self.root,
                 EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
                 msg,
+            )
+            .conn()?;
+        Ok(())
+    }
+
+    fn raise(&mut self, id: WindowId) -> Result<()> {
+        self.check(id)?;
+        // Under a reparenting window manager this request is redirected to it, which restacks
+        // the window's frame; without one it restacks the window directly.
+        self.conn
+            .configure_window(
+                id.0,
+                &ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE),
             )
             .conn()?;
         Ok(())

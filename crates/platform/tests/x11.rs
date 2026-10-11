@@ -76,6 +76,7 @@ fn spec(title: &str, rect: Rect) -> WindowSpec {
         title: title.into(),
         rect,
         kind: WindowKind::Main,
+        owner: None,
     }
 }
 
@@ -229,6 +230,82 @@ fn injected_clicks_arrive_with_local_and_root_coordinates() {
     );
     probe.button(false);
     wait_for(&mut p, |e| matches!(e, Event::ButtonUp { .. }));
+}
+
+/// Window ids of the root's children, bottom to top.
+fn stacking(probe: &Probe) -> Vec<u32> {
+    probe
+        .conn
+        .query_tree(probe.root)
+        .unwrap()
+        .reply()
+        .unwrap()
+        .children
+}
+
+#[test]
+fn panels_record_their_owner_and_raise_restacks() {
+    let Some(mut p) = platform() else { return };
+    let main = shown(&mut p, "owner", Rect::new(0, 0, 50, 50));
+    let mut panel_spec = spec("panel", Rect::new(0, 50, 50, 50));
+    panel_spec.kind = WindowKind::Panel;
+    panel_spec.owner = Some(main);
+    let panel = p.create_window(&panel_spec).unwrap();
+    p.set_visible(panel, true).unwrap();
+    p.flush().unwrap();
+    wait_for(
+        &mut p,
+        |e| matches!(e, Event::Expose { window } if *window == panel),
+    );
+
+    let probe = Probe::new();
+    let reply = probe
+        .conn
+        .get_property(
+            false,
+            panel.0,
+            xproto::AtomEnum::WM_TRANSIENT_FOR,
+            xproto::AtomEnum::WINDOW,
+            0,
+            1,
+        )
+        .unwrap()
+        .reply()
+        .unwrap();
+    assert_eq!(reply.value32().unwrap().collect::<Vec<_>>(), vec![main.0]);
+
+    // Another client's window covers ours; raising puts ours back on top.
+    let other = probe.conn.generate_id().unwrap();
+    probe
+        .conn
+        .create_window(
+            0,
+            other,
+            probe.root,
+            0,
+            0,
+            100,
+            100,
+            0,
+            xproto::WindowClass::INPUT_OUTPUT,
+            0,
+            &Default::default(),
+        )
+        .unwrap();
+    probe.conn.map_window(other).unwrap();
+    probe.sync();
+    let pos = |order: &[u32], w: u32| order.iter().position(|x| *x == w).unwrap();
+    let before = stacking(&probe);
+    assert!(pos(&before, other) > pos(&before, panel.0));
+    p.raise(panel).unwrap();
+    p.raise(main).unwrap();
+    p.pointer().unwrap();
+    let after = stacking(&probe);
+    assert!(pos(&after, panel.0) > pos(&after, other), "{after:?}");
+    assert!(
+        pos(&after, main.0) > pos(&after, panel.0),
+        "last raised is on top"
+    );
 }
 
 #[test]

@@ -403,6 +403,22 @@ impl App {
         self.redraw(true)
     }
 
+    /// Brings every visible window of ours to the front, `focused` last so it ends on top,
+    /// as the classic player does when any of its windows is activated.
+    fn raise_all(&mut self, focused: WindowId) -> Result<()> {
+        let ids: Vec<WindowId> = self
+            .wins
+            .iter()
+            .filter(|w| w.visible && w.id != focused)
+            .map(|w| w.id)
+            .collect();
+        for id in ids {
+            self.platform.raise(id)?;
+        }
+        self.platform.raise(focused)?;
+        Ok(())
+    }
+
     fn interacting(&self, panel: PanelId) -> bool {
         match panel {
             MAIN => self.main.is_interacting(),
@@ -560,12 +576,17 @@ impl App {
                     }
                 }
             }
-            Event::Focus { window, focused } => match self.panel_of(window) {
-                Some(MAIN) => self.main.focused = focused,
-                Some(EQ) => self.eq.focused = focused,
-                Some(_) => self.pl.focused = focused,
-                None => {}
-            },
+            Event::Focus { window, focused } => {
+                match self.panel_of(window) {
+                    Some(MAIN) => self.main.focused = focused,
+                    Some(EQ) => self.eq.focused = focused,
+                    Some(_) => self.pl.focused = focused,
+                    None => {}
+                }
+                if focused {
+                    self.raise_all(window)?;
+                }
+            }
             Event::CloseRequested { .. } => self.quit = true,
             Event::Configured { window, rect } => {
                 self.tracker.observed(window, Point::new(rect.x, rect.y));
@@ -721,10 +742,13 @@ fn main() -> Result<()> {
             r.w * scale,
             r.h * scale,
         );
+        // Panels belong to the main window, so the window manager raises them with it.
+        let owner = wins.first().map(|w: &Win| w.id);
         let id = platform.create_window(&WindowSpec {
             title: title.into(),
             rect,
             kind,
+            owner,
         })?;
         layout.insert(panel, rect);
         wins.push(Win {

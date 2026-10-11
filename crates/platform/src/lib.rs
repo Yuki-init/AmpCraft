@@ -33,6 +33,9 @@ pub struct WindowSpec {
     pub title: String,
     pub rect: Rect,
     pub kind: WindowKind,
+    /// The window this one belongs to (panels belong to the main window). The window manager
+    /// keeps an owned window stacked with its owner and raises them together.
+    pub owner: Option<WindowId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +141,8 @@ pub trait Platform {
     fn resize_window(&mut self, id: WindowId, size: Size) -> Result<()>;
     /// Iconifies the window.
     fn minimize(&mut self, id: WindowId) -> Result<()>;
+    /// Asks for the window to be stacked above other windows. Does not change focus.
+    fn raise(&mut self, id: WindowId) -> Result<()>;
     /// Draws a full frame of `size.w * size.h` pixels at the window's top-left.
     fn present(&mut self, id: WindowId, size: Size, pixels: &[u32]) -> Result<()>;
     /// Restricts the window's visible and clickable area to `rects` (window coordinates).
