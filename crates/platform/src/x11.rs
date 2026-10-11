@@ -604,6 +604,18 @@ impl Platform for X11Platform {
     }
 
     fn present(&mut self, id: WindowId, size: Size, pixels: &[u32]) -> Result<()> {
+        let rows = size.h.max(0) as usize;
+        self.present_rows(id, size, pixels, 0, rows)
+    }
+
+    fn present_rows(
+        &mut self,
+        id: WindowId,
+        size: Size,
+        pixels: &[u32],
+        first: usize,
+        last: usize,
+    ) -> Result<()> {
         self.check(id)?;
         let (w, h) = (size.w.max(0) as usize, size.h.max(0) as usize);
         if pixels.len() != w * h {
@@ -612,17 +624,23 @@ impl Platform for X11Platform {
                 expected: w * h,
             });
         }
-        if w == 0 || h == 0 {
+        let last = last.min(h);
+        if w == 0 || first >= last {
             return Ok(());
         }
         // Keep every PutImage under the server's request size limit.
         let max_bytes = self.conn.maximum_request_bytes().saturating_sub(64);
-        let rows_per_band = (max_bytes / (w * 4)).clamp(1, h);
-        let mut bytes = Vec::with_capacity(rows_per_band * w * 4);
-        for (band_index, band) in pixels.chunks(rows_per_band * w).enumerate() {
+        let rows_per_band = (max_bytes / (w * 4)).max(1);
+        let mut bytes = Vec::with_capacity(rows_per_band.min(last - first) * w * 4);
+        let mut y = first;
+        while y < last {
+            let rows = rows_per_band.min(last - y);
             bytes.clear();
-            bytes.extend(band.iter().flat_map(|p| p.to_le_bytes()));
-            let rows = band.len() / w;
+            bytes.extend(
+                pixels[y * w..(y + rows) * w]
+                    .iter()
+                    .flat_map(|p| p.to_le_bytes()),
+            );
             self.conn
                 .put_image(
                     ImageFormat::Z_PIXMAP,
@@ -631,12 +649,13 @@ impl Platform for X11Platform {
                     w as u16,
                     rows as u16,
                     0,
-                    clamp_i16((band_index * rows_per_band) as i32),
+                    clamp_i16(y as i32),
                     0,
                     self.depth,
                     &bytes,
                 )
                 .conn()?;
+            y += rows;
         }
         Ok(())
     }

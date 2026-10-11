@@ -112,6 +112,21 @@ impl EqWindow {
         EqControl::all().find(|c| c.contains(p))
     }
 
+    /// Changes whenever the rendered image would change.
+    pub fn render_hash(&self, scale: u32) -> u64 {
+        crate::render::hash_of(&(
+            scale,
+            self.enabled,
+            self.auto,
+            self.preamp_db.to_bits(),
+            self.bands_db.map(f32::to_bits),
+            self.focused,
+            self.shaded,
+            self.pressed.map(|(c, inside)| (format!("{c:?}"), inside)),
+            self.slider.map(|c| format!("{c:?}")),
+        ))
+    }
+
     pub fn is_interacting(&self) -> bool {
         self.pressed.is_some() || self.slider.is_some()
     }

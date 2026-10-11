@@ -18,6 +18,11 @@ unwrap_used = "deny"
 expect_used = "deny"
 undocumented_unsafe_blocks = "deny"
 
+[profile.dev]
+# Light optimization keeps debug builds responsive (pixel loops are 5-10x faster) while
+# compiling quickly and keeping debug info.
+opt-level = 1
+
 [profile.dev.package."*"]
 # Dependencies (FFmpeg bindings, image decoding) are slow unoptimized.
 opt-level = 2

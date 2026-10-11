@@ -107,6 +107,8 @@ pub struct PlaylistWindow {
     resize: Option<(Point, i32, i32)>,
     last_click: Option<(EntryId, u64)>,
     rows: HashMap<(String, u32, u32), TextStrip>,
+    /// Bumped when entries or the current track change, for [`Self::render_hash`].
+    revision: u64,
 }
 
 impl Default for PlaylistWindow {
@@ -151,6 +153,7 @@ impl PlaylistWindow {
             resize: None,
             last_click: None,
             rows: HashMap::new(),
+            revision: 0,
         }
     }
 
@@ -167,6 +170,7 @@ impl PlaylistWindow {
 
     /// Forget text rendered with the previous skin's colors.
     pub fn skin_changed(&mut self) {
+        self.revision += 1;
         self.rows.clear();
     }
 
@@ -179,8 +183,27 @@ impl PlaylistWindow {
         &self.entries
     }
 
+    /// Changes whenever the rendered image would change at `now_ms`.
+    pub fn render_hash(&self, scale: u32, now_ms: u64) -> u64 {
+        let blink_off = self.now.state == PlayState::Paused && (now_ms / 500) % 2 == 1;
+        crate::render::hash_of(&(
+            (scale, self.w, self.h, self.shaded, self.focused),
+            (self.revision, self.scroll, &self.selected, self.current),
+            (
+                format!("{:?}", self.now.state),
+                self.now.position.as_secs(),
+                blink_off,
+            ),
+            (
+                self.pressed.map(|(c, i)| (format!("{c:?}"), i)),
+                self.scroll_drag.is_some(),
+            ),
+        ))
+    }
+
     /// Replaces the list, keeping selection and scroll for entries that remain.
     pub fn set_entries(&mut self, entries: Vec<PlaylistEntry>) {
+        self.revision += 1;
         let ids: BTreeSet<EntryId> = entries.iter().map(|e| e.id).collect();
         self.selected.retain(|id| ids.contains(id));
         self.entries = entries;
@@ -193,6 +216,7 @@ impl PlaylistWindow {
     /// Marks the playing entry, scrolling it into view when it changes.
     pub fn set_current(&mut self, id: Option<EntryId>) {
         if id != self.current {
+            self.revision += 1;
             self.current = id;
             if let Some(i) = id.and_then(|id| self.index_of(id)) {
                 self.ensure_visible(i);

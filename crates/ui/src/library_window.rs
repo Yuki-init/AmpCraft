@@ -140,6 +140,8 @@ pub struct LibraryWindow {
     resize: Option<(Point, i32, i32)>,
     last_click: Option<(i64, u64)>,
     text_cache: HashMap<(String, u32, u32), TextStrip>,
+    /// Bumped when data (tree, rows, status, skin) changes, for [`Self::render_hash`].
+    revision: u64,
 }
 
 impl Default for LibraryWindow {
@@ -221,12 +223,33 @@ impl LibraryWindow {
             resize: None,
             last_click: None,
             text_cache: HashMap::new(),
+            revision: 0,
         }
     }
 
     /// Forget text rendered with the previous skin's colors.
     pub fn skin_changed(&mut self) {
+        self.revision += 1;
         self.text_cache.clear();
+    }
+
+    /// Changes whenever the rendered image would change.
+    pub fn render_hash(&self, scale: u32) -> u64 {
+        crate::render::hash_of(&(
+            (scale, self.w, self.h, self.focused, self.revision),
+            (
+                format!("{:?}", self.selection),
+                &self.search,
+                &self.expanded,
+            ),
+            (
+                self.tree_scroll,
+                self.scroll,
+                &self.selected,
+                format!("{:?}", self.sort),
+            ),
+            (format!("{:?}", self.pressed), self.scroll_drag.is_some()),
+        ))
     }
 
     pub fn size(&self) -> (i32, i32) {
@@ -248,7 +271,11 @@ impl LibraryWindow {
     }
 
     pub fn set_status(&mut self, status: impl Into<String>) {
-        self.status = status.into();
+        let status = status.into();
+        if status != self.status {
+            self.revision += 1;
+        }
+        self.status = status;
     }
 
     /// Category contents and the total track count.
@@ -259,6 +286,7 @@ impl LibraryWindow {
         albums: Vec<(String, u64)>,
         genres: Vec<(String, u64)>,
     ) {
+        self.revision += 1;
         self.total = total;
         self.artists = artists;
         self.albums = albums;
@@ -267,6 +295,7 @@ impl LibraryWindow {
 
     /// Rows answering the last query.
     pub fn set_tracks(&mut self, rows: Vec<LibraryRow>) {
+        self.revision += 1;
         let ids: BTreeSet<i64> = rows.iter().map(|r| r.id).collect();
         self.selected.retain(|id| ids.contains(id));
         self.rows = rows;

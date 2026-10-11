@@ -145,6 +145,20 @@ pub trait Platform {
     fn raise(&mut self, id: WindowId) -> Result<()>;
     /// Draws a full frame of `size.w * size.h` pixels at the window's top-left.
     fn present(&mut self, id: WindowId, size: Size, pixels: &[u32]) -> Result<()>;
+    /// Draws only rows `first..last` of a full frame (the rest of the window keeps what it
+    /// shows). The default sends the whole frame.
+    fn present_rows(
+        &mut self,
+        id: WindowId,
+        size: Size,
+        pixels: &[u32],
+        first: usize,
+        last: usize,
+    ) -> Result<()> {
+        let _ = (first, last);
+        self.present(id, size, pixels)
+    }
+
     /// Restricts the window's visible and clickable area to `rects` (window coordinates).
     /// `None` restores a plain rectangle.
     fn set_shape(&mut self, id: WindowId, rects: Option<&[Rect]>) -> Result<()>;

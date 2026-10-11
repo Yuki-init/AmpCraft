@@ -33,7 +33,7 @@ Six built-in themes are generated in code from popular color schemes: `dracula`,
 
 ## Running on the host with real audio
 
-The container cannot reach the sound server, so `scripts/host-run.sh` builds a binary in the container and runs it on the host, bundling the FFmpeg libraries the host lacks under `.cache/host-bin/`:
+The container cannot reach the sound server, so `scripts/host-run.sh` builds an optimized binary in the container (`--debug` for a debug build) and runs it on the host, bundling the FFmpeg libraries the host lacks under `.cache/host-bin/`:
 
 ```sh
 scripts/host-run.sh openamp-cli devices

@@ -36,6 +36,8 @@ pub struct Queue {
     /// Play order when shuffle is on. Contains every entry id exactly once.
     shuffle_order: Option<Vec<TrackId>>,
     rng: XorShift,
+    /// Bumped on every change, so observers can skip work when nothing changed.
+    version: u64,
 }
 
 impl Default for Queue {
@@ -57,7 +59,13 @@ impl Queue {
             repeat: Repeat::Off,
             shuffle_order: None,
             rng: XorShift::new(seed),
+            version: 0,
         }
+    }
+
+    /// Changes whenever entries, order, shuffle or repeat change.
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     pub fn entries(&self) -> &[QueueEntry] {
@@ -83,6 +91,7 @@ impl Queue {
 
     /// Appends a track and returns its id.
     pub fn push(&mut self, path: impl AsRef<Path>) -> TrackId {
+        self.version += 1;
         let id = self.next_id;
         self.next_id += 1;
         self.entries.push(QueueEntry {
@@ -106,6 +115,7 @@ impl Queue {
 
     /// Removes a track. Returns false if it was not queued.
     pub fn remove(&mut self, id: TrackId) -> bool {
+        self.version += 1;
         let Some(pos) = self.position(id) else {
             return false;
         };
@@ -117,6 +127,7 @@ impl Queue {
     }
 
     pub fn clear(&mut self) {
+        self.version += 1;
         self.entries.clear();
         if let Some(order) = self.shuffle_order.as_mut() {
             order.clear();
@@ -125,6 +136,7 @@ impl Queue {
 
     /// Moves the entry at display index `from` to display index `to`.
     pub fn move_entry(&mut self, from: usize, to: usize) -> bool {
+        self.version += 1;
         if from >= self.entries.len() || to >= self.entries.len() {
             return false;
         }
@@ -138,6 +150,7 @@ impl Queue {
     }
 
     pub fn set_repeat(&mut self, repeat: Repeat) {
+        self.version += 1;
         self.repeat = repeat;
     }
 
@@ -147,6 +160,7 @@ impl Queue {
 
     /// Turns shuffle on or off. Turning it on draws a fresh random order.
     pub fn set_shuffle(&mut self, on: bool) {
+        self.version += 1;
         if on {
             let mut order: Vec<TrackId> = self.entries.iter().map(|e| e.id).collect();
             self.rng.shuffle(&mut order);
@@ -355,6 +369,21 @@ mod tests {
         assert!(!order.contains(&ids[0]));
         q.set_shuffle(false);
         assert_eq!(q.play_order()[0], ids[1]);
+    }
+
+    #[test]
+    fn version_changes_on_every_mutation() {
+        let mut q = Queue::new();
+        let v0 = q.version();
+        let id = q.push("/a.flac");
+        assert!(q.version() > v0);
+        let v1 = q.version();
+        let _ = q.entries();
+        let _ = q.next_after(id);
+        assert_eq!(q.version(), v1, "reads do not change it");
+        q.set_shuffle(true);
+        q.remove(id);
+        assert!(q.version() > v1);
     }
 
     #[test]

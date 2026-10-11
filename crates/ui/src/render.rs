@@ -1,6 +1,16 @@
 //! Software rendering helpers.
 
+use std::hash::{Hash, Hasher};
+
 use amp_skin::Bitmap;
+
+/// Hash of everything that affects a window's pixels, so unchanged windows can skip
+/// rendering.
+pub fn hash_of<T: Hash>(value: &T) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut h);
+    h.finish()
+}
 
 /// Integer nearest-neighbor upscale, for double and triple size.
 pub fn scale_nearest(src: &Bitmap, factor: u32) -> Bitmap {

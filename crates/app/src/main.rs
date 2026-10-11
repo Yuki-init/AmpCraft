@@ -101,6 +101,8 @@ struct Win {
     applied: Rect,
     visible: bool,
     frame: Option<Bitmap>,
+    /// Render hash of `frame`, for windows that can skip unchanged frames.
+    hash: Option<u64>,
 }
 
 struct App {
@@ -122,6 +124,12 @@ struct App {
     saved_playlist: String,
     last_save: Instant,
     last_title_press: Option<(PanelId, Instant)>,
+    perf: amp_app::perf::FrameStats,
+    /// The queue as last copied, and its version.
+    queue_cache: Vec<(TrackId, PathBuf)>,
+    queue_version: u64,
+    /// Playlist rows need rebuilding (queue or metadata changed).
+    entries_dirty: bool,
     #[cfg(target_os = "linux")]
     mpris: Option<amp_app::mpris::Mpris>,
     /// Last position reported over MPRIS and when, to detect jumps.
@@ -239,6 +247,7 @@ impl App {
     fn update(&mut self) {
         for m in self.prober.drain() {
             self.meta.insert(m.id, m);
+            self.entries_dirty = true;
         }
         let status = self.player.status();
         if status.track.is_some() {
@@ -256,29 +265,43 @@ impl App {
                 title: None,
                 duration: None,
             });
-            entry.title = entry.title.take().or(title);
-            entry.duration = entry.duration.or(info.duration);
-        }
-
-        // Playlist entries from the queue; probe anything new.
-        let queued: Vec<(TrackId, PathBuf)> = self
-            .player
-            .with_queue(|q| q.entries().iter().map(|e| (e.id, e.path.clone())).collect());
-        for (id, path) in &queued {
-            if self.requested.insert(*id) {
-                self.prober.request(*id, path.clone());
+            if entry.title.is_none() && title.is_some()
+                || entry.duration.is_none() && info.duration.is_some()
+            {
+                entry.title = entry.title.take().or(title);
+                entry.duration = entry.duration.or(info.duration);
+                self.entries_dirty = true;
             }
         }
-        let entries: Vec<PlaylistEntry> = queued
-            .iter()
-            .map(|(id, path)| PlaylistEntry {
-                id: *id,
-                title: self.title_for(*id, path),
-                duration: self.meta.get(id).and_then(|m| m.duration),
-            })
-            .collect();
-        if entries != self.pl.entries() {
-            self.pl.set_entries(entries);
+
+        // Copy the queue only when it changed; probe anything new.
+        let version = self.player.with_queue(|q| q.version());
+        if version != self.queue_version {
+            self.queue_version = version;
+            self.queue_cache = self
+                .player
+                .with_queue(|q| q.entries().iter().map(|e| (e.id, e.path.clone())).collect());
+            for (id, path) in &self.queue_cache {
+                if self.requested.insert(*id) {
+                    self.prober.request(*id, path.clone());
+                }
+            }
+            self.entries_dirty = true;
+        }
+        let queued = &self.queue_cache;
+        if self.entries_dirty {
+            self.entries_dirty = false;
+            let entries: Vec<PlaylistEntry> = queued
+                .iter()
+                .map(|(id, path)| PlaylistEntry {
+                    id: *id,
+                    title: self.title_for(*id, path),
+                    duration: self.meta.get(id).and_then(|m| m.duration),
+                })
+                .collect();
+            if entries != self.pl.entries() {
+                self.pl.set_entries(entries);
+            }
         }
         self.pl.set_current(self.current);
 
@@ -329,23 +352,71 @@ impl App {
 
     fn redraw(&mut self, force: bool) -> Result<()> {
         let now_ms = self.now_ms();
+        let scale = self.scale as u32;
         for i in 0..self.wins.len() {
             if !self.wins[i].visible {
                 continue;
             }
-            let scale = self.scale as u32;
-            let frame = match self.wins[i].panel {
-                MAIN => self.main.render(&self.skin, &mut self.font, now_ms, scale),
-                EQ => self.eq.render(&self.skin, scale),
-                LIB => self.lib.render(&self.skin, &mut self.font, scale),
-                _ => self.pl.render(&self.skin, &mut self.font, now_ms, scale),
+            // Windows that only change on interaction skip rendering when nothing changed.
+            let hash = match self.wins[i].panel {
+                MAIN => None,
+                EQ => Some(self.eq.render_hash(scale)),
+                LIB => Some(self.lib.render_hash(scale)),
+                _ => Some(self.pl.render_hash(scale, now_ms)),
             };
-            let w = &mut self.wins[i];
-            if force || w.frame.as_ref() != Some(&frame) {
-                let size = Size::new(frame.width() as i32, frame.height() as i32);
-                self.platform.present(w.id, size, frame.pixels())?;
-                w.frame = Some(frame);
+            if !force && self.wins[i].frame.is_some() && hash.is_some() && hash == self.wins[i].hash
+            {
+                continue;
             }
+            let start = std::time::Instant::now();
+            let (frame, section) = match self.wins[i].panel {
+                MAIN => (
+                    self.main.render(&self.skin, &mut self.font, now_ms, scale),
+                    "render.main",
+                ),
+                EQ => (self.eq.render(&self.skin, scale), "render.eq"),
+                LIB => (
+                    self.lib.render(&self.skin, &mut self.font, scale),
+                    "render.library",
+                ),
+                _ => (
+                    self.pl.render(&self.skin, &mut self.font, now_ms, scale),
+                    "render.playlist",
+                ),
+            };
+            self.perf.record(section, start.elapsed());
+            let start = std::time::Instant::now();
+            let w = &mut self.wins[i];
+            w.hash = hash;
+            let size = Size::new(frame.width() as i32, frame.height() as i32);
+            match w.frame.as_ref().filter(|old| {
+                !force && old.width() == frame.width() && old.height() == frame.height()
+            }) {
+                Some(old) => {
+                    // Send only the band of rows that changed.
+                    let width = frame.width() as usize;
+                    let rows_differ = |y: usize| {
+                        old.pixels()[y * width..(y + 1) * width]
+                            != frame.pixels()[y * width..(y + 1) * width]
+                    };
+                    let height = frame.height() as usize;
+                    if let Some(first) = (0..height).find(|y| rows_differ(*y)) {
+                        let last = (first..height)
+                            .rev()
+                            .find(|y| rows_differ(*y))
+                            .unwrap_or(first)
+                            + 1;
+                        self.platform
+                            .present_rows(w.id, size, frame.pixels(), first, last)?;
+                        w.frame = Some(frame);
+                    }
+                }
+                None => {
+                    self.platform.present(w.id, size, frame.pixels())?;
+                    w.frame = Some(frame);
+                }
+            }
+            self.perf.record("present", start.elapsed());
         }
         Ok(())
     }
@@ -1200,9 +1271,14 @@ impl App {
             if self.last_save.elapsed() > Duration::from_secs(30) {
                 self.save_state(false);
             }
+            let start = std::time::Instant::now();
             self.update();
+            self.perf.record("update", start.elapsed());
             self.redraw(false)?;
+            let start = std::time::Instant::now();
             self.platform.flush()?;
+            self.perf.record("flush", start.elapsed());
+            self.perf.frame();
         }
         Ok(())
     }
@@ -1447,6 +1523,7 @@ fn main() -> Result<()> {
             applied: rect,
             visible,
             frame: None,
+            hash: None,
         });
     }
     layout.set_leader(Some(MAIN));
@@ -1504,6 +1581,10 @@ fn main() -> Result<()> {
         saved_playlist: String::new(),
         last_save: Instant::now(),
         last_title_press: None,
+        perf: amp_app::perf::FrameStats::from_env(),
+        queue_cache: Vec::new(),
+        queue_version: u64::MAX,
+        entries_dirty: true,
         #[cfg(target_os = "linux")]
         mpris: match amp_app::mpris::Mpris::start() {
             Ok(m) => Some(m),

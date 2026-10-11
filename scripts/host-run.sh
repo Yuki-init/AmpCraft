@@ -4,18 +4,18 @@
 # so the libraries the host lacks are bundled into .cache/host-bin/lib and loaded through
 # LD_LIBRARY_PATH. Nothing is installed on the host.
 #
-# Usage: scripts/host-run.sh [--release] BIN [ARGS...]
+# Usage: scripts/host-run.sh [--debug] BIN [ARGS...]
+# Builds optimized (release) binaries by default; --debug builds faster but runs far slower.
 # Example: scripts/host-run.sh openamp-cli play --volume 30 song.flac
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-profile=debug
-build_flags=""
-if [[ "${1:-}" == "--release" ]]; then
-    profile=release
-    build_flags="--release"
-    shift
-fi
-bin="${1:?usage: scripts/host-run.sh [--release] BIN [ARGS...]}"
+profile=release
+build_flags="--release"
+case "${1:-}" in
+    --debug) profile=debug; build_flags=""; shift ;;
+    --release) shift ;;
+esac
+bin="${1:?usage: scripts/host-run.sh [--debug] BIN [ARGS...]}"
 shift
 
 out="$REPO_ROOT/.cache/host-bin"

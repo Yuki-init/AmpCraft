@@ -9,4 +9,5 @@ pub mod metadata;
 #[cfg(target_os = "linux")]
 pub mod mpris;
 pub mod null_sink;
+pub mod perf;
 pub mod system_font;

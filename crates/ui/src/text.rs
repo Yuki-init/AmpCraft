@@ -71,9 +71,10 @@ fn blend(dst: u32, src: u32, alpha: u8) -> u32 {
 /// A rendered line of text, ready to be scrolled through a clip box.
 #[derive(Debug, Clone)]
 pub struct TextStrip {
-    pixels: Bitmap,
+    // Shared, so cached strips are cloned by reference every frame.
+    pixels: std::sync::Arc<Bitmap>,
     /// Pixels where the text was drawn (the rest is transparent).
-    used: Vec<bool>,
+    used: std::sync::Arc<Vec<bool>>,
     /// Drawn with the skin's bitmap font (scaled with the window) rather than a system font
     /// (rendered at the final size).
     bitmap: bool,
@@ -92,15 +93,15 @@ impl TextStrip {
         if !use_bitmap && let Some(mask) = fallback.render(text, fallback_height) {
             let (_, fg) = text_colors(skin);
             let pixels = Bitmap::new(mask.width, mask.height, fg);
-            let used = mask.alpha.iter().map(|a| *a > 0).collect();
+            let used: Vec<bool> = mask.alpha.iter().map(|a| *a > 0).collect();
             let mut pixels = pixels;
             // Store alpha in the top byte; blended when drawn.
             for (p, a) in pixels.pixels_mut().iter_mut().zip(&mask.alpha) {
                 *p = (*p & 0x00FF_FFFF) | u32::from(*a) << 24;
             }
             return Self {
-                pixels,
-                used,
+                pixels: pixels.into(),
+                used: used.into(),
                 bitmap: false,
             };
         }
@@ -113,8 +114,8 @@ impl TextStrip {
             *p |= 0xFF00_0000;
         }
         Self {
-            pixels,
-            used,
+            pixels: pixels.into(),
+            used: used.into(),
             bitmap: true,
         }
     }
@@ -133,10 +134,10 @@ impl TextStrip {
             for (p, a) in pixels.pixels_mut().iter_mut().zip(&mask.alpha) {
                 *p = (*p & 0x00FF_FFFF) | u32::from(*a) << 24;
             }
-            let used = mask.alpha.iter().map(|a| *a > 0).collect();
+            let used: Vec<bool> = mask.alpha.iter().map(|a| *a > 0).collect();
             return Self {
-                pixels,
-                used,
+                pixels: pixels.into(),
+                used: used.into(),
                 bitmap: false,
             };
         }
@@ -145,13 +146,13 @@ impl TextStrip {
         skin.draw_text(&mut pixels, text, 0, 0);
         // Only the glyph pixels, not the font's background, in a list.
         let (bg, _) = text_colors(skin);
-        let used = pixels.pixels().iter().map(|p| *p != bg).collect();
+        let used: Vec<bool> = pixels.pixels().iter().map(|p| *p != bg).collect();
         for p in pixels.pixels_mut() {
             *p |= 0xFF00_0000;
         }
         Self {
-            pixels,
-            used,
+            pixels: pixels.into(),
+            used: used.into(),
             bitmap: true,
         }
     }
