@@ -759,29 +759,23 @@ impl PlaylistWindow {
             let r = self.control_rect(PlControl::Shade);
             skin.draw(&mut b, sp::UNSHADE_PRESSED, r.x, r.y);
         }
-        let current = self.current.and_then(|id| {
-            let i = self.entries.iter().position(|e| e.id == id)?;
-            Some((i, self.entries[i].clone()))
-        });
-        let Some((i, entry)) = current else {
-            return crate::render::scale_nearest(&b, scale);
+        // The current track, else the first one (as the main window shows); an empty list
+        // shows its name.
+        let shown = self
+            .current
+            .and_then(|id| self.entries.iter().position(|e| e.id == id))
+            .or((!self.entries.is_empty()).then_some(0));
+        let (label, duration) = match shown {
+            Some(i) => (
+                format!("{}. {}", i + 1, self.entries[i].title),
+                duration_text(self.entries[i].duration),
+            ),
+            None => ("Playlist".to_owned(), String::new()),
         };
         let color = skin.playlist_style().current;
         let height = ROW_TEXT_H * scale;
-        let title = self.row_strip(
-            skin,
-            fallback,
-            &format!("{}. {}", i + 1, entry.title),
-            color,
-            height,
-        );
-        let time = self.row_strip(
-            skin,
-            fallback,
-            &duration_text(entry.duration),
-            color,
-            height,
-        );
+        let title = self.row_strip(skin, fallback, &label, color, height);
+        let time = self.row_strip(skin, fallback, &duration, color, height);
         // Skin-font text is drawn before scaling, system-font text after.
         let draw_text = |dst: &mut Bitmap, unit: i32| {
             // The time ends 30 px from the right, clear of the shade and close buttons.
@@ -1051,6 +1045,33 @@ mod tests {
         );
         w.set_entries(entries(3));
         assert_eq!(w.selected(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn shade_bar_titles_without_a_current_track() {
+        let skin = coded_skin();
+        let shaded = |n: u64, current: Option<EntryId>| {
+            let mut w = window(n);
+            w.shaded = true;
+            w.set_current(current);
+            w.render(&skin, &mut NoFallback, 0, 1)
+        };
+        // Nothing current yet: the first track shows, as on the main window.
+        let first = entries(3)[0].id;
+        assert_eq!(shaded(3, None), shaded(3, Some(first)));
+        // An empty list still has a label on the bar.
+        let mut bare = PlaylistWindow::new();
+        bare.shaded = true;
+        let mut blank = Bitmap::new(275, 14, 0xFF00_0000);
+        let mut x = 25;
+        while x < 275 - 50 {
+            skin.draw(&mut blank, sp::SHADE_TILE, x, 0);
+            x += 25;
+        }
+        skin.draw(&mut blank, sp::SHADE_LEFT, 0, 0);
+        skin.draw(&mut blank, sp::SHADE_RIGHT, 275 - 50, 0);
+        assert_ne!(shaded(0, None), blank, "empty list shows a label");
+        assert_eq!(bare.render(&skin, &mut NoFallback, 0, 1), shaded(0, None));
     }
 
     #[test]
