@@ -35,6 +35,8 @@ pub struct Queue {
     repeat: Repeat,
     /// Play order when shuffle is on. Contains every entry id exactly once.
     shuffle_order: Option<Vec<TrackId>>,
+    /// Tracks queued to play next, in order, ahead of the normal order (the playlist's Q).
+    up_next: Vec<TrackId>,
     rng: XorShift,
     /// Bumped on every change, so observers can skip work when nothing changed.
     version: u64,
@@ -58,6 +60,7 @@ impl Queue {
             next_id: 1,
             repeat: Repeat::Off,
             shuffle_order: None,
+            up_next: Vec::new(),
             rng: XorShift::new(seed),
             version: 0,
         }
@@ -123,6 +126,7 @@ impl Queue {
         if let Some(order) = self.shuffle_order.as_mut() {
             order.retain(|x| *x != id);
         }
+        self.up_next.retain(|x| *x != id);
         true
     }
 
@@ -132,6 +136,7 @@ impl Queue {
         if let Some(order) = self.shuffle_order.as_mut() {
             order.clear();
         }
+        self.up_next.clear();
     }
 
     /// Moves the entry at display index `from` to display index `to`.
@@ -226,6 +231,51 @@ impl Queue {
             None if self.repeat != Repeat::Off => order.first().copied(),
             None => None,
         }
+    }
+
+    /// Tracks queued to play next, in order.
+    pub fn up_next(&self) -> &[TrackId] {
+        &self.up_next
+    }
+
+    /// Queues `id` to play next (after anything already queued). Returns false if it is not
+    /// in the playlist or already queued.
+    pub fn queue_next(&mut self, id: TrackId) -> bool {
+        if self.get(id).is_none() || self.up_next.contains(&id) {
+            return false;
+        }
+        self.version += 1;
+        self.up_next.push(id);
+        true
+    }
+
+    /// Takes `id` out of the play-next queue. Returns whether it was queued.
+    pub fn unqueue(&mut self, id: TrackId) -> bool {
+        let before = self.up_next.len();
+        self.up_next.retain(|x| *x != id);
+        let removed = self.up_next.len() != before;
+        if removed {
+            self.version += 1;
+        }
+        removed
+    }
+
+    /// Like [`Self::next_after`], but a queued track comes first (and leaves the queue).
+    pub fn take_next_after(&mut self, id: TrackId) -> Option<TrackId> {
+        self.take_queued().or_else(|| self.next_after(id))
+    }
+
+    /// Like [`Self::after_finished`], but a queued track comes first (and leaves the queue).
+    pub fn take_after_finished(&mut self, id: TrackId) -> Option<TrackId> {
+        self.take_queued().or_else(|| self.after_finished(id))
+    }
+
+    fn take_queued(&mut self) -> Option<TrackId> {
+        if self.up_next.is_empty() {
+            return None;
+        }
+        self.version += 1;
+        Some(self.up_next.remove(0))
     }
 
     /// Track the "previous" button goes to from `id`.
@@ -434,5 +484,30 @@ mod tests {
         assert_ne!(order, ids, "seeded shuffle moves something");
         order.sort_unstable();
         assert_eq!(order, ids);
+    }
+
+    #[test]
+    fn play_next_queue_comes_first_and_empties() {
+        let mut q = Queue::new();
+        let ids = q.extend(["a", "b", "c", "d"]);
+        assert!(q.queue_next(ids[3]));
+        assert!(q.queue_next(ids[2]));
+        assert!(!q.queue_next(ids[2]), "already queued");
+        assert!(!q.queue_next(999), "not in the playlist");
+        assert_eq!(q.up_next(), &[ids[3], ids[2]]);
+        assert_eq!(q.take_next_after(ids[0]), Some(ids[3]));
+        assert_eq!(q.take_after_finished(ids[3]), Some(ids[2]));
+        assert!(q.up_next().is_empty());
+        assert_eq!(
+            q.take_next_after(ids[2]),
+            Some(ids[3]),
+            "back to the normal order"
+        );
+        q.queue_next(ids[1]);
+        assert!(q.unqueue(ids[1]));
+        assert!(!q.unqueue(ids[1]));
+        q.queue_next(ids[1]);
+        q.remove(ids[1]);
+        assert!(q.up_next().is_empty(), "removed tracks leave the queue");
     }
 }

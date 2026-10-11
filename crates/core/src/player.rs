@@ -454,7 +454,7 @@ impl Worker {
                 let Some(id) = self.heard_track() else {
                     return true;
                 };
-                let next = self.shared.queue().next_after(id);
+                let next = self.shared.queue().take_next_after(id);
                 if let Some(next) = next {
                     self.start(next);
                 }
@@ -542,7 +542,7 @@ impl Worker {
 
     /// Continues gaplessly after `finished` ended on its own.
     fn advance(&mut self, finished: TrackId) {
-        let candidate = self.shared.queue().after_finished(finished);
+        let candidate = self.shared.queue().take_after_finished(finished);
         self.open_from(candidate);
     }
 
@@ -573,6 +573,8 @@ impl Worker {
             .map(|e| e.path.clone())
             .ok_or(CoreError::NotQueued(id))?;
         let decoder = Decoder::open(&path, self.shared.sample_rate)?;
+        // A queued track played some other way leaves the play-next queue.
+        self.shared.queue().unqueue(id);
         let info = Arc::new(decoder.info().clone());
         self.mark(Some((id, info)), 0);
         self.current = Some(Active { id, decoder });

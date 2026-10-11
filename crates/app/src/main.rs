@@ -340,6 +340,8 @@ impl App {
                     self.prober.request(*id, path.clone());
                 }
             }
+            let up_next = self.player.with_queue(|q| q.up_next().to_vec());
+            self.pl.set_up_next(up_next);
             self.entries_dirty = true;
         }
         let queued = &self.queue_cache;
@@ -634,6 +636,14 @@ impl App {
                 self.sync_windows()?;
             }
             PlaylistAction::Transport(a) => self.act(a)?,
+            PlaylistAction::Reorder(order) => self.player.with_queue(|q| q.reorder(&order)),
+            PlaylistAction::ToggleQueue(ids) => self.player.with_queue(|q| {
+                for id in ids {
+                    if !q.unqueue(id) {
+                        q.queue_next(id);
+                    }
+                }
+            }),
             PlaylistAction::AddFolder => {
                 if self.pick_mode.is_none() {
                     let start = self.last_dir.clone().or_else(|| self.dirs.music.clone());
@@ -1331,6 +1341,12 @@ impl App {
                     }
                     // Right-click on the main window: the visualization menu over the
                     // visualizer, the main menu elsewhere.
+                    // Right-click on a track: the track menu.
+                    MouseButton::Right if panel == PL => {
+                        if self.pl.right_click(p) {
+                            self.open_menu(MenuKind::PlaylistItems, root, false)?;
+                        }
+                    }
                     MouseButton::Right if panel == MAIN => {
                         let a = amp_ui::vis::AREA;
                         let over_vis =

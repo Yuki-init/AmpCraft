@@ -45,6 +45,14 @@ pub(crate) enum MenuCmd {
     EqDeleteUser(usize),
     EqDeleteAuto,
     EqReset,
+    PlPlay,
+    PlQueue,
+    PlRemove,
+    PlCrop,
+    PlFileInfo,
+    PlSelectAll,
+    PlSelectNone,
+    PlInvert,
 }
 
 /// The settings menus show ticks for.
@@ -192,6 +200,43 @@ pub(crate) fn playlist_misc_menu(s: &MenuState) -> Vec<MenuEntry<MenuCmd>> {
     ]
 }
 
+/// Right-click on playlist tracks (`selected` of them; `queued` if any is in the queue).
+pub(crate) fn playlist_items_menu(selected: usize, queued: bool) -> Vec<MenuEntry<MenuCmd>> {
+    let any = selected > 0;
+    vec![
+        MenuEntry::item("Play", MenuCmd::PlPlay)
+            .shortcut("Enter")
+            .enabled(any),
+        MenuEntry::item(
+            if queued {
+                "Remove from queue"
+            } else {
+                "Queue to play next"
+            },
+            MenuCmd::PlQueue,
+        )
+        .shortcut("Q")
+        .enabled(any),
+        MenuEntry::Separator,
+        MenuEntry::item("Remove", MenuCmd::PlRemove)
+            .shortcut("Del")
+            .enabled(any),
+        MenuEntry::item("Crop", MenuCmd::PlCrop).enabled(any),
+        MenuEntry::Separator,
+        MenuEntry::item("File info...", MenuCmd::PlFileInfo).enabled(selected == 1),
+        MenuEntry::Separator,
+        MenuEntry::submenu(
+            "Select",
+            vec![
+                MenuEntry::item("All", MenuCmd::PlSelectAll).shortcut("Ctrl+A"),
+                MenuEntry::item("None", MenuCmd::PlSelectNone),
+                MenuEntry::item("Invert", MenuCmd::PlInvert),
+            ],
+        ),
+        MenuEntry::submenu("Sort", playlist_sort_menu()),
+    ]
+}
+
 /// The media library's Library button.
 pub(crate) fn library_menu() -> Vec<MenuEntry<MenuCmd>> {
     vec![
@@ -210,6 +255,7 @@ pub(crate) enum MenuKind {
     PlaylistMisc,
     Library,
     EqPresets,
+    PlaylistItems,
 }
 
 /// An open menu and how it was opened.
@@ -276,6 +322,11 @@ impl App {
             MenuKind::PlaylistMisc => playlist_misc_menu(&s),
             MenuKind::Library => library_menu(),
             MenuKind::EqPresets => self.eq_presets_menu(),
+            MenuKind::PlaylistItems => {
+                let sel = self.pl.selected();
+                let queued = self.player.with_queue(|q| q.up_next().to_vec());
+                playlist_items_menu(sel.len(), sel.iter().any(|id| queued.contains(id)))
+            }
         };
         let screens = self.platform.screens()?;
         let screen = screens
@@ -509,6 +560,37 @@ impl App {
                 amp_app::dialog::pick_folder(start, self.folder_picks.0.clone());
             }
             MenuCmd::LibraryRescan => self.start_scan(),
+            MenuCmd::PlPlay => {
+                if let Some(first) = self.pl.selected().first() {
+                    self.player.play_track(*first)?;
+                }
+            }
+            MenuCmd::PlQueue => {
+                let ids = self.pl.selected();
+                self.act_playlist(amp_ui::PlaylistAction::ToggleQueue(ids))?;
+            }
+            MenuCmd::PlRemove => {
+                let ids = self.pl.selected();
+                self.act_playlist(amp_ui::PlaylistAction::Remove(ids))?;
+            }
+            MenuCmd::PlCrop => {
+                let keep = self.pl.selected();
+                let drop: Vec<TrackId> = self
+                    .queue_cache
+                    .iter()
+                    .map(|(id, _)| *id)
+                    .filter(|id| !keep.contains(id))
+                    .collect();
+                self.act_playlist(amp_ui::PlaylistAction::Remove(drop))?;
+            }
+            MenuCmd::PlFileInfo => {
+                if let Some(id) = self.pl.selected().first() {
+                    self.act_playlist(amp_ui::PlaylistAction::FileInfo(*id))?;
+                }
+            }
+            MenuCmd::PlSelectAll => self.pl.select_all(),
+            MenuCmd::PlSelectNone => self.pl.select_none(),
+            MenuCmd::PlInvert => self.pl.invert_selection(),
             MenuCmd::EqLoadBuiltin(_)
             | MenuCmd::EqLoadUser(_)
             | MenuCmd::EqLoadFile
@@ -680,6 +762,19 @@ mod tests {
         assert_eq!(playlist_remove_menu().len(), 2);
         let misc = playlist_misc_menu(&MenuState::default());
         assert!(!item(&misc, "File info...").enabled);
+    }
+
+    #[test]
+    fn playlist_items_menu_follows_the_selection() {
+        let none = playlist_items_menu(0, false);
+        assert!(!item(&none, "Play").enabled);
+        assert!(!item(&none, "Remove").enabled);
+        let two = playlist_items_menu(2, false);
+        assert!(item(&two, "Queue to play next").enabled);
+        assert!(!item(&two, "File info...").enabled, "one track at a time");
+        let queued = playlist_items_menu(1, true);
+        assert!(item(&queued, "Remove from queue").enabled);
+        assert!(item(&queued, "File info...").enabled);
     }
 
     #[test]

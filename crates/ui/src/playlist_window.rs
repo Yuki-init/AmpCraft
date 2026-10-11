@@ -175,6 +175,10 @@ pub enum PlaylistAction {
     Resize(i32, i32),
     /// A mini transport button.
     Transport(Action),
+    /// Rows were dragged: the playlist in its new order.
+    Reorder(Vec<EntryId>),
+    /// Q: queue these tracks to play next, or take them out of the queue.
+    ToggleQueue(Vec<EntryId>),
 }
 
 /// What a button press started.
@@ -210,6 +214,12 @@ pub struct PlaylistWindow {
     /// Pointer position and window size when a resize began.
     resize: Option<crate::grip::Resize>,
     last_click: Option<(EntryId, u64)>,
+    /// Tracks queued to play next (shown as [1], [2], ...).
+    up_next: Vec<EntryId>,
+    /// Dragging selected rows: the row under the pointer now, and a single row to select
+    /// on release if the drag never moved (a plain click inside a multi-selection).
+    reorder: Option<usize>,
+    click_select: Option<EntryId>,
     rows: HashMap<(String, u32, u32), TextStrip>,
     bar_menu: Option<BarMenu>,
     /// Bumped when entries or the current track change, for [`Self::render_hash`].
@@ -259,6 +269,9 @@ impl PlaylistWindow {
             last_click: None,
             rows: HashMap::new(),
             bar_menu: None,
+            up_next: Vec::new(),
+            reorder: None,
+            click_select: None,
             revision: 0,
         }
     }
@@ -348,6 +361,86 @@ impl PlaylistWindow {
             || self.scroll_drag.is_some()
             || self.resize.is_some()
             || self.bar_menu.is_some()
+            || self.reorder.is_some()
+    }
+
+    /// The play-next queue, for the [n] markers.
+    pub fn set_up_next(&mut self, ids: Vec<EntryId>) {
+        if ids != self.up_next {
+            self.up_next = ids;
+            self.revision += 1;
+        }
+    }
+
+    pub fn select_all(&mut self) {
+        self.selected = self.entries.iter().map(|e| e.id).collect();
+    }
+
+    pub fn select_none(&mut self) {
+        self.selected.clear();
+    }
+
+    pub fn invert_selection(&mut self) {
+        self.selected = self
+            .entries
+            .iter()
+            .filter(|e| !self.selected.contains(&e.id))
+            .map(|e| e.id)
+            .collect();
+    }
+
+    /// The row index under `p` in the list, if `p` is over the track list.
+    fn row_at(&self, p: Point) -> Option<usize> {
+        let list = self.list_rect();
+        if self.shaded || !Self::inside(list, p) {
+            return None;
+        }
+        Some(((p.y - list.y) / ROW_H).max(0) as usize + self.scroll)
+    }
+
+    /// A right-click: over a track that is not selected, selects just that track. Returns
+    /// whether `p` is over the track list (where the track menu opens).
+    pub fn right_click(&mut self, p: Point) -> bool {
+        let Some(row) = self.row_at(p) else {
+            return false;
+        };
+        if let Some(id) = self.entries.get(row).map(|e| e.id)
+            && !self.selected.contains(&id)
+        {
+            self.selected.clear();
+            self.selected.insert(id);
+            self.anchor = Some(row);
+        }
+        true
+    }
+
+    /// Moves the selected rows `delta` places (as far as the ends allow), keeping their
+    /// spacing. Returns the new order when anything moved.
+    fn move_selection(&mut self, delta: i64) -> Option<Vec<EntryId>> {
+        let picked: Vec<usize> = (0..self.entries.len())
+            .filter(|i| self.selected.contains(&self.entries[*i].id))
+            .collect();
+        let (first, last) = (*picked.first()?, *picked.last()?);
+        let delta = delta.clamp(-(first as i64), (self.entries.len() - 1 - last) as i64);
+        if delta == 0 {
+            return None;
+        }
+        for _ in 0..delta.unsigned_abs() {
+            let idx: Vec<usize> = (0..self.entries.len())
+                .filter(|i| self.selected.contains(&self.entries[*i].id))
+                .collect();
+            if delta > 0 {
+                for &i in idx.iter().rev() {
+                    self.entries.swap(i, i + 1);
+                }
+            } else {
+                for &i in &idx {
+                    self.entries.swap(i, i - 1);
+                }
+            }
+        }
+        self.revision += 1;
+        Some(self.entries.iter().map(|e| e.id).collect())
     }
 
     /// The resize grip under `p` (none while shaded).
@@ -541,6 +634,9 @@ impl PlaylistWindow {
         mods: SelectMods,
         now_ms: u64,
     ) -> (PlDown, Vec<PlaylistAction>) {
+        // A new press ends any drag whose release was lost.
+        self.reorder = None;
+        self.click_select = None;
         if self.shaded {
             for c in [PlControl::Close, PlControl::Shade] {
                 if Self::inside(self.control_rect(c), p) {
@@ -641,9 +737,16 @@ impl PlaylistWindow {
             }
             self.anchor = Some(row);
         } else {
-            self.selected.clear();
-            self.selected.insert(id);
+            if self.selected.contains(&id) && self.selected.len() > 1 {
+                // Keep the selection so it can be dragged; a click without a drag
+                // selects just this row on release.
+                self.click_select = Some(id);
+            } else {
+                self.selected.clear();
+                self.selected.insert(id);
+            }
             self.anchor = Some(row);
+            self.reorder = Some(row);
         }
         let double = self
             .last_click
@@ -660,6 +763,21 @@ impl PlaylistWindow {
     pub fn pointer_move(&mut self, p: Point) -> Vec<PlaylistAction> {
         if let Some(offset) = self.scroll_drag {
             self.scroll_to_handle(p.y - offset);
+            return Vec::new();
+        }
+        if let Some(from) = self.reorder {
+            let list = self.list_rect();
+            let row = ((p.y - list.y) / ROW_H) as i64 + self.scroll as i64;
+            let row = row.clamp(0, self.entries.len().saturating_sub(1) as i64);
+            let delta = row - from as i64;
+            if delta != 0
+                && let Some(order) = self.move_selection(delta)
+            {
+                self.click_select = None;
+                self.reorder = Some(row as usize);
+                self.anchor = Some(row as usize);
+                return vec![PlaylistAction::Reorder(order)];
+            }
             return Vec::new();
         }
         if let Some(r) = self.resize {
@@ -685,6 +803,13 @@ impl PlaylistWindow {
 
     pub fn pointer_up(&mut self, p: Point) -> Vec<PlaylistAction> {
         self.scroll_drag = None;
+        if self.reorder.take().is_some() {
+            if let Some(id) = self.click_select.take() {
+                self.selected.clear();
+                self.selected.insert(id);
+            }
+            return Vec::new();
+        }
         if let Some(menu) = self.bar_menu {
             if !menu.armed {
                 // The opening click ended where it began: keep the menu open.
@@ -748,6 +873,14 @@ impl PlaylistWindow {
         const RETURN: u32 = 0xff0d;
         const DELETE: u32 = 0xffff;
         const ESCAPE: u32 = 0xff1b;
+        if matches!(keysym, 0x71 | 0x51) && !mods.ctrl && self.bar_menu.is_none() {
+            let ids = self.selected();
+            return if ids.is_empty() {
+                Vec::new()
+            } else {
+                vec![PlaylistAction::ToggleQueue(ids)]
+            };
+        }
         if self.bar_menu.is_some() {
             if keysym == ESCAPE {
                 self.bar_menu = None;
@@ -930,13 +1063,14 @@ impl PlaylistWindow {
                 style.normal
             };
             let height = ROW_TEXT_H * scale;
-            let duration = self.row_strip(
-                skin,
-                fallback,
-                &duration_text(entry.duration),
-                color,
-                height,
-            );
+            // Queued tracks show their place in the play-next queue before the length.
+            let time = match self.up_next.iter().position(|q| *q == entry.id) {
+                Some(n) => format!("[{}] {}", n + 1, duration_text(entry.duration))
+                    .trim_end()
+                    .to_owned(),
+                None => duration_text(entry.duration),
+            };
+            let duration = self.row_strip(skin, fallback, &time, color, height);
             let title = self.row_strip(
                 skin,
                 fallback,
@@ -1413,6 +1547,73 @@ mod tests {
             w.pointer_down(Point::new(5, 100), NONE, 0).0,
             PlDown::DragWindow
         );
+    }
+
+    fn ids(w: &PlaylistWindow) -> Vec<EntryId> {
+        w.entries().iter().map(|e| e.id).collect()
+    }
+
+    #[test]
+    fn dragging_selected_rows_reorders() {
+        let mut w = window(5);
+        // Select rows 1 and 3 (ids 2 and 4), then drag row 1 down two places.
+        w.pointer_down(row_point(&w, 1), NONE, 0);
+        w.pointer_up(row_point(&w, 1));
+        let ctrl = SelectMods {
+            shift: false,
+            ctrl: true,
+        };
+        w.pointer_down(row_point(&w, 3), ctrl, 1000);
+        w.pointer_up(row_point(&w, 3));
+        w.pointer_down(row_point(&w, 1), NONE, 2000);
+        let a = w.pointer_move(row_point(&w, 2));
+        assert_eq!(a, vec![PlaylistAction::Reorder(vec![1, 3, 2, 5, 4])]);
+        // The last selected row is at the end now: further down does nothing.
+        assert!(w.pointer_move(row_point(&w, 4)).is_empty());
+        // Back up two places, keeping the gap between them.
+        let a = w.pointer_move(row_point(&w, 0));
+        assert_eq!(a, vec![PlaylistAction::Reorder(vec![2, 1, 4, 3, 5])]);
+        w.pointer_up(row_point(&w, 0));
+        assert_eq!(w.selected(), vec![2, 4], "the selection stays");
+        assert_eq!(ids(&w), vec![2, 1, 4, 3, 5]);
+    }
+
+    #[test]
+    fn click_in_a_selection_without_dragging_selects_one() {
+        let mut w = window(4);
+        w.select_all();
+        w.pointer_down(row_point(&w, 2), NONE, 0);
+        assert_eq!(w.selected().len(), 4, "kept while pressed, for dragging");
+        w.pointer_up(row_point(&w, 2));
+        assert_eq!(w.selected(), vec![3]);
+        w.invert_selection();
+        assert_eq!(w.selected(), vec![1, 2, 4]);
+        w.select_none();
+        assert!(w.selected().is_empty());
+    }
+
+    #[test]
+    fn queue_key_markers_and_right_click() {
+        let skin = coded_skin();
+        let mut w = window(3);
+        assert!(w.key(0x71, NONE).is_empty(), "nothing selected");
+        assert!(w.right_click(row_point(&w, 2)));
+        assert_eq!(w.selected(), vec![3]);
+        assert_eq!(
+            w.key(0x71, NONE),
+            vec![PlaylistAction::ToggleQueue(vec![3])]
+        );
+        // Right-click inside the selection keeps it; outside the list it does nothing.
+        w.select_all();
+        assert!(w.right_click(row_point(&w, 0)));
+        assert_eq!(w.selected().len(), 3);
+        assert!(!w.right_click(Point::new(5, 5)));
+        let before = w.render_hash(1, 0);
+        w.set_up_next(vec![3, 1]);
+        assert_ne!(w.render_hash(1, 0), before, "markers redraw");
+        // Rows still render with the markers.
+        let b = w.render(&skin, &mut NoFallback, 0, 1);
+        assert_eq!(b.width() as i32, w.size().0);
     }
 
     #[test]
