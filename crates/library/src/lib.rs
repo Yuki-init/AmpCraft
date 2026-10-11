@@ -93,6 +93,49 @@ pub struct Track {
     pub id: i64,
     pub path: PathBuf,
     pub tags: FileTags,
+    /// File size in bytes.
+    pub size: u64,
+    pub plays: PlayStats,
+}
+
+/// When a track joined the library and how it has been played. Times are Unix seconds.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PlayStats {
+    pub added_at: Option<i64>,
+    pub play_count: u32,
+    pub last_played: Option<i64>,
+}
+
+/// The library views (the "Local Media" items of the classic media library).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum View {
+    /// Every track, in album order.
+    #[default]
+    Audio,
+    /// Played tracks, most plays first.
+    MostPlayed,
+    /// Newest additions first.
+    RecentlyAdded,
+    /// Played tracks, latest first.
+    RecentlyPlayed,
+    /// Tracks never played.
+    NeverPlayed,
+}
+
+/// One row of the artist filter: name, number of albums, number of tracks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtistSummary {
+    pub name: String,
+    pub albums: u64,
+    pub tracks: u64,
+}
+
+/// One row of the album filter: name, year (latest tagged), number of tracks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlbumSummary {
+    pub name: String,
+    pub year: Option<u32>,
+    pub tracks: u64,
 }
 
 impl Track {
@@ -128,6 +171,7 @@ pub struct ScanReport {
 /// Narrows a track listing. Unset parts match everything.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filter {
+    pub view: View,
     /// Album artist, or artist for tracks without one.
     pub artist: Option<String>,
     pub album: Option<String>,
@@ -155,15 +199,53 @@ impl std::fmt::Debug for Library {
     }
 }
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const TRACK_COLUMNS: &str = "id, path, title, artist, album, album_artist, genre, track, disc, \
-                             year, duration_ms, codec, sample_rate, channels, bit_rate";
+                             year, duration_ms, codec, sample_rate, channels, bit_rate, size, \
+                             added_at, play_count, last_played";
 
 fn modified_secs(meta: &std::fs::Metadata) -> i64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// The WHERE clause every listing shares: ?1 search pattern, ?2 artist, ?3 album, ?4 genre,
+/// ?5 view.
+const FILTER_WHERE: &str = "(title LIKE ?1 ESCAPE '\\' OR artist LIKE ?1 ESCAPE '\\'
+        OR album LIKE ?1 ESCAPE '\\' OR album_artist LIKE ?1 ESCAPE '\\'
+        OR genre LIKE ?1 ESCAPE '\\' OR path LIKE ?1 ESCAPE '\\')
+    AND (?2 IS NULL OR COALESCE(album_artist, artist) = ?2 OR artist = ?2)
+    AND (?3 IS NULL OR album = ?3)
+    AND (?4 IS NULL OR genre = ?4)
+    AND CASE ?5 WHEN 1 THEN play_count > 0
+                WHEN 3 THEN last_played IS NOT NULL
+                WHEN 4 THEN play_count = 0
+                ELSE 1 END";
+
+/// Parameters for [`FILTER_WHERE`].
+fn filter_params(f: &Filter) -> (String, Option<String>, Option<String>, Option<String>, i64) {
+    let view = match f.view {
+        View::Audio => 0,
+        View::MostPlayed => 1,
+        View::RecentlyAdded => 2,
+        View::RecentlyPlayed => 3,
+        View::NeverPlayed => 4,
+    };
+    (
+        format!("%{}%", like_escape(f.text.trim())),
+        f.artist.clone(),
+        f.album.clone(),
+        f.genre.clone(),
+        view,
+    )
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
 }
 
@@ -197,6 +279,12 @@ fn row_to_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
             bit_rate: row
                 .get::<_, Option<i64>>(14)?
                 .and_then(|v| u64::try_from(v).ok()),
+        },
+        size: u64::try_from(row.get::<_, i64>(15)?).unwrap_or(0),
+        plays: PlayStats {
+            added_at: row.get(16)?,
+            play_count: u32::try_from(row.get::<_, i64>(17)?).unwrap_or(0),
+            last_played: row.get(18)?,
         },
     })
 }
@@ -263,7 +351,7 @@ impl Library {
 
     fn init(conn: Connection) -> Result<Self> {
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version < SCHEMA_VERSION {
+        if version < 1 {
             conn.execute_batch(
                 "CREATE TABLE IF NOT EXISTS tracks (
                     id INTEGER PRIMARY KEY,
@@ -277,6 +365,17 @@ impl Library {
                 CREATE INDEX IF NOT EXISTS tracks_artist ON tracks(artist);
                 CREATE INDEX IF NOT EXISTS tracks_album ON tracks(album);
                 PRAGMA user_version = 1;",
+            )?;
+        }
+        if version < SCHEMA_VERSION {
+            // Play statistics. Tracks from before this version count as added when their
+            // file was last modified.
+            conn.execute_batch(
+                "ALTER TABLE tracks ADD COLUMN added_at INTEGER;
+                 ALTER TABLE tracks ADD COLUMN play_count INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE tracks ADD COLUMN last_played INTEGER;
+                 UPDATE tracks SET added_at = mtime;
+                 PRAGMA user_version = 2;",
             )?;
         }
         Ok(Self { conn })
@@ -353,8 +452,9 @@ impl Library {
                 tx.execute(
                     "INSERT INTO tracks (path, size, mtime, title, artist, album, album_artist,
                         genre, track, disc, year, duration_ms, codec, sample_rate, channels,
-                        bit_rate)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                        bit_rate, added_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                        ?17)
                      ON CONFLICT(path) DO UPDATE SET size = ?2, mtime = ?3, title = ?4,
                         artist = ?5, album = ?6, album_artist = ?7, genre = ?8, track = ?9,
                         disc = ?10, year = ?11, duration_ms = ?12, codec = ?13,
@@ -376,6 +476,7 @@ impl Library {
                         tags.sample_rate,
                         tags.channels,
                         tags.bit_rate.map(|b| b as i64),
+                        now_secs(),
                     ],
                 )?;
                 if known.is_some() {
@@ -427,32 +528,90 @@ impl Library {
         )
     }
 
-    /// Tracks matching every set part of `filter`, in album order.
+    /// Tracks matching every set part of `filter`, in the view's order (album order for
+    /// the plain audio view).
     pub fn tracks(&self, filter: &Filter, limit: usize) -> Result<Vec<Track>> {
-        let pattern = format!("%{}%", like_escape(filter.text.trim()));
+        let order = match filter.view {
+            View::Audio | View::NeverPlayed => {
+                "COALESCE(album_artist, artist), album, disc, track, path"
+            }
+            View::MostPlayed => "play_count DESC, last_played DESC, path",
+            View::RecentlyAdded => {
+                "added_at DESC, COALESCE(album_artist, artist), album, disc, track, path"
+            }
+            View::RecentlyPlayed => "last_played DESC, path",
+        };
         let sql = format!(
-            "SELECT {TRACK_COLUMNS} FROM tracks
-             WHERE (title LIKE ?1 ESCAPE '\\' OR artist LIKE ?1 ESCAPE '\\'
-                    OR album LIKE ?1 ESCAPE '\\' OR album_artist LIKE ?1 ESCAPE '\\'
-                    OR path LIKE ?1 ESCAPE '\\')
-               AND (?2 IS NULL OR COALESCE(album_artist, artist) = ?2 OR artist = ?2)
-               AND (?3 IS NULL OR album = ?3)
-               AND (?4 IS NULL OR genre = ?4)
-             ORDER BY COALESCE(album_artist, artist), album, disc, track, path
-             LIMIT ?5"
+            "SELECT {TRACK_COLUMNS} FROM tracks WHERE {FILTER_WHERE} ORDER BY {order} LIMIT ?6"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(
-            params![
-                pattern,
-                filter.artist,
-                filter.album,
-                filter.genre,
-                limit as i64
-            ],
-            row_to_track,
-        )?;
+        let p = filter_params(filter);
+        let rows = stmt.query_map(params![p.0, p.1, p.2, p.3, p.4, limit as i64], row_to_track)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Artists among the tracks the filter's view and text select (its artist and album are
+    /// ignored), with album and track counts, by name.
+    pub fn artist_summary(&self, filter: &Filter) -> Result<Vec<ArtistSummary>> {
+        let f = Filter {
+            artist: None,
+            album: None,
+            ..filter.clone()
+        };
+        let sql = format!(
+            "SELECT COALESCE(album_artist, artist) AS v, COUNT(DISTINCT album), COUNT(*)
+             FROM tracks WHERE {FILTER_WHERE} AND v IS NOT NULL AND v != ''
+             GROUP BY v ORDER BY v COLLATE NOCASE"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let p = filter_params(&f);
+        let rows = stmt.query_map(params![p.0, p.1, p.2, p.3, p.4], |r| {
+            Ok(ArtistSummary {
+                name: r.get(0)?,
+                albums: r.get::<_, i64>(1)? as u64,
+                tracks: r.get::<_, i64>(2)? as u64,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Albums among the tracks the filter's view, text and artist select (its album is
+    /// ignored), with year and track count, by name.
+    pub fn album_summary(&self, filter: &Filter) -> Result<Vec<AlbumSummary>> {
+        let f = Filter {
+            album: None,
+            ..filter.clone()
+        };
+        let sql = format!(
+            "SELECT album AS v, MAX(year), COUNT(*)
+             FROM tracks WHERE {FILTER_WHERE} AND v IS NOT NULL AND v != ''
+             GROUP BY v ORDER BY v COLLATE NOCASE"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let p = filter_params(&f);
+        let rows = stmt.query_map(params![p.0, p.1, p.2, p.3, p.4], |r| {
+            Ok(AlbumSummary {
+                name: r.get(0)?,
+                year: r
+                    .get::<_, Option<i64>>(1)?
+                    .and_then(|y| u32::try_from(y).ok()),
+                tracks: r.get::<_, i64>(2)? as u64,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Counts a play of the file at `path` at `at` (Unix seconds). Returns false when the
+    /// file is not in the library.
+    pub fn record_play(&self, path: &Path, at: i64) -> Result<bool> {
+        let Some(key) = path.to_str() else {
+            return Ok(false);
+        };
+        let n = self.conn.execute(
+            "UPDATE tracks SET play_count = play_count + 1, last_played = ?2 WHERE path = ?1",
+            params![key, at],
+        )?;
+        Ok(n > 0)
     }
 
     /// Distinct values of a grouping with their track counts, sorted by name. Untagged tracks
@@ -680,6 +839,115 @@ mod tests {
         };
         assert_eq!(lib.tracks(&by_artist, 10).unwrap().len(), 3);
         assert_eq!(lib.tracks(&by_artist, 2).unwrap().len(), 2, "limit applies");
+    }
+
+    fn titles(tracks: Vec<Track>) -> Vec<String> {
+        tracks.into_iter().map(|t| t.tags.title.unwrap()).collect()
+    }
+
+    #[test]
+    fn summaries_count_albums_and_tracks() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        write(d, "Alpha/01 alfa.flac", b"1");
+        write(d, "Alpha/02 bravo.flac", b"2");
+        write(d, "beta/01 charlie.flac", b"3");
+        let mut lib = Library::open_in_memory().unwrap();
+        scan(&mut lib, &[d.to_path_buf()], &FakeTags::new());
+        let artists = lib.artist_summary(&Filter::default()).unwrap();
+        assert_eq!(
+            artists,
+            vec![ArtistSummary {
+                name: "Artist".into(),
+                albums: 2,
+                tracks: 3
+            }]
+        );
+        // The search narrows the panes; the album pane follows the artist.
+        let f = Filter {
+            text: "charlie".into(),
+            artist: Some("Artist".into()),
+            album: Some("ignored".into()),
+            ..Filter::default()
+        };
+        assert_eq!(
+            lib.album_summary(&f).unwrap(),
+            vec![AlbumSummary {
+                name: "beta".into(),
+                year: None,
+                tracks: 1
+            }]
+        );
+        assert_eq!(lib.artist_summary(&f).unwrap()[0].tracks, 1);
+        let nobody = Filter {
+            artist: Some("Nobody".into()),
+            ..Filter::default()
+        };
+        assert!(lib.album_summary(&nobody).unwrap().is_empty());
+    }
+
+    #[test]
+    fn plays_drive_the_views() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        write(d, "A/01 one.flac", b"1");
+        write(d, "A/02 two.flac", b"2");
+        write(d, "A/03 three.flac", b"3");
+        let mut lib = Library::open_in_memory().unwrap();
+        scan(&mut lib, &[d.to_path_buf()], &FakeTags::new());
+        let one = d.join("A/01 one.flac");
+        let three = d.join("A/03 three.flac");
+        assert!(lib.record_play(&three, 100).unwrap());
+        assert!(lib.record_play(&one, 200).unwrap());
+        assert!(lib.record_play(&three, 300).unwrap());
+        assert!(!lib.record_play(&d.join("elsewhere.flac"), 1).unwrap());
+        let view = |v| {
+            titles(
+                lib.tracks(
+                    &Filter {
+                        view: v,
+                        ..Filter::default()
+                    },
+                    10,
+                )
+                .unwrap(),
+            )
+        };
+        assert_eq!(view(View::MostPlayed), ["03 three", "01 one"]);
+        assert_eq!(view(View::RecentlyPlayed), ["03 three", "01 one"]);
+        assert_eq!(view(View::NeverPlayed), ["02 two"]);
+        assert_eq!(view(View::Audio).len(), 3);
+        assert_eq!(view(View::RecentlyAdded).len(), 3);
+        let t = lib.search("three", 1).unwrap().remove(0);
+        assert_eq!(t.plays.play_count, 2);
+        assert_eq!(t.plays.last_played, Some(300));
+        assert!(t.plays.added_at.is_some());
+        assert_eq!(t.size, 1);
+    }
+
+    #[test]
+    fn version_1_databases_are_upgraded() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("old.sqlite3");
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE tracks (
+                    id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, size INTEGER NOT NULL,
+                    mtime INTEGER NOT NULL, title TEXT, artist TEXT, album TEXT,
+                    album_artist TEXT, genre TEXT, track INTEGER, disc INTEGER, year INTEGER,
+                    duration_ms INTEGER, codec TEXT, sample_rate INTEGER, channels INTEGER,
+                    bit_rate INTEGER);
+                 INSERT INTO tracks (path, size, mtime, title) VALUES ('/m/a.flac', 5, 1234, 'A');
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        }
+        let lib = Library::open(&db).unwrap();
+        let t = lib.search("", 10).unwrap().remove(0);
+        assert_eq!(t.plays.added_at, Some(1234), "added when last modified");
+        assert_eq!(t.plays.play_count, 0);
+        assert!(lib.record_play(Path::new("/m/a.flac"), 99).unwrap());
     }
 
     #[test]

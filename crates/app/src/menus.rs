@@ -33,6 +33,8 @@ pub(crate) enum MenuCmd {
     RemoveMissing,
     RemoveDuplicates,
     RefreshTitles,
+    LibraryAddFolder,
+    LibraryRescan,
 }
 
 /// The settings menus show ticks for.
@@ -178,6 +180,14 @@ pub(crate) fn playlist_misc_menu(s: &MenuState) -> Vec<MenuEntry<MenuCmd>> {
     ]
 }
 
+/// The media library's Library button.
+pub(crate) fn library_menu() -> Vec<MenuEntry<MenuCmd>> {
+    vec![
+        MenuEntry::item("Add folder to library...", MenuCmd::LibraryAddFolder),
+        MenuEntry::item("Rescan library", MenuCmd::LibraryRescan),
+    ]
+}
+
 /// Which menu to open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuKind {
@@ -187,6 +197,7 @@ pub(crate) enum MenuKind {
     PlaylistSort,
     PlaylistRemove,
     PlaylistMisc,
+    Library,
 }
 
 /// An open menu and how it was opened.
@@ -251,6 +262,7 @@ impl App {
             MenuKind::PlaylistSort => playlist_sort_menu(),
             MenuKind::PlaylistRemove => playlist_remove_menu(),
             MenuKind::PlaylistMisc => playlist_misc_menu(&s),
+            MenuKind::Library => library_menu(),
         };
         let screens = self.platform.screens()?;
         let screen = screens
@@ -478,6 +490,11 @@ impl App {
                     })
                 });
             }
+            MenuCmd::LibraryAddFolder => {
+                let start = self.dirs.music.clone();
+                amp_app::dialog::pick_folder(start, self.folder_picks.0.clone());
+            }
+            MenuCmd::LibraryRescan => self.start_scan(),
             MenuCmd::RefreshTitles => {
                 // Forget probed tags; the next update probes every entry again.
                 self.meta.clear();

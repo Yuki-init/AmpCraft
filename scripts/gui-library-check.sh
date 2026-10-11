@@ -1,7 +1,8 @@
 #!/bin/bash
 # Drives the media library window under Xvfb with openbox: builds a sandboxed library from
-# generated tracks, opens the window with --library, selects an album, searches, and plays
-# by double-click. Screenshots go to .cache/lib-*.png.
+# generated tracks, opens the window with --library, picks an artist, searches, plays
+# by double-click, checks Most Played, clears the search and opens the Library menu.
+# Screenshots go to .cache/lib-*.png.
 # Run inside the container: scripts/dev.sh scripts/gui-library-check.sh
 set -u
 SKIN=${SKIN:-skins/base-2.91.wsz}
@@ -25,20 +26,26 @@ sleep 1
 target/debug/openamp --audio null --library --skin "$SKIN" >.cache/lib.log 2>&1 &
 APID=$!
 sleep 2.5
-# Library window at x 375 (right of main), y 100; size 425x290.
+# Library window at x 375 (right of main), y 100; default size 625x406. Layout (window
+# coordinates): tree rows from y 23; Artist pane at x 117 and Album pane at x 367 with rows
+# from y 54; track rows from y 189; buttons at y 374 (Library at x 13, Play at x 117).
 LX=375; LY=100
-shot() { import -window root -crop 440x300+$((LX - 5))+$((LY - 5)) +repage ".cache/lib-$1.png"; echo "shot $1"; }
+shot() { import -window root -crop 640x420+$((LX - 5))+$((LY - 5)) +repage ".cache/lib-$1.png"; echo "shot $1"; }
 click() { xdotool mousemove $((LX + $1)) $((LY + $2)) click 1; sleep "${3:-0.4}"; }
 shot 1-open
-click 30 53                    # "+ Albums" header (tree row 2)
-click 30 66                    # "Album One" (tree row 3)
-shot 2-album
-xdotool mousemove $((LX + 200)) $((LY + 60)) click 1; sleep 0.2
-xdotool type --delay 50 "chum"; sleep 0.5
-click 30 27                    # back to "All tracks" (tree row 0) to search everything
+click 160 $((54 + 13 + 6))           # Artist pane: chum (rows: All, chum, KEIKO, Ma15)
+shot 2-artist
+xdotool type --delay 50 "fly"; sleep 0.5
 shot 3-search
-xdotool mousemove $((LX + 200)) $((LY + 62)) click --repeat 2 --delay 120 1; sleep 1.2
+xdotool mousemove $((LX + 300)) $((LY + 189 + 6)) click --repeat 2 --delay 120 1; sleep 1.2
 shot 4-playing
-import -window root -crop 280x120+95+95 +repage .cache/lib-5-main.png
+click 60 $((23 + 2 * 13 + 6)) 0.8    # tree: Most Played
+shot 5-most-played
+click 580 29                         # Clear Search
+shot 6-cleared
+click 60 $((374 + 7)) 0.6            # Library button: its menu
+import -window root -crop 300x120+$((LX))+$((LY + 300)) +repage .cache/lib-7-menu.png
+xdotool key Escape; sleep 0.3
+import -window root -crop 280x120+95+95 +repage .cache/lib-8-main.png
 kill $APID $XPID 2>/dev/null
 grep -i -E "error|panic" .cache/lib.log || true

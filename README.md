@@ -44,6 +44,12 @@ selection, selected, or misc (missing files, duplicates); **SEL** invert, none, 
 sort (title, file name, path, reverse, randomize), file info, options (reread titles); **LIST**
 new, save (.m3u8) and load (.m3u, .m3u8, .pls).
 
+The media library (Alt+L) follows the 5.x layout: a Local Media tree (Audio, Most Played,
+Recently Added, Recently Played, Never Played), a search bar, Artist and Album filter panes
+(double-click one to play it) and a sortable track list. The Library button adds folders and
+rescans. Play counts are kept in the library database (in the data folder, never on the music
+drive).
+
 | Key | Does |
 | --- | --- |
 | Z X C V B | Previous, play, pause, stop, next |

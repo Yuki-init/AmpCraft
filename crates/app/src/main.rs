@@ -16,7 +16,7 @@ use amp_audio_out::{AudioOutput, Controls, OutputDevice};
 use amp_core::{PlaybackState, Player, PlayerConfig, Repeat, Status, TrackId};
 use amp_dock::{Layout, PanelId, Rect};
 use amp_dsp::{AnalyzerReader, EqControls, Equalizer, FFT_SIZE, Spectrum};
-use amp_library::{Filter, Library};
+use amp_library::{Filter, Library, View};
 use amp_platform::AppDirs;
 use amp_platform::x11::X11Platform;
 use amp_platform::{
@@ -25,9 +25,9 @@ use amp_platform::{
 use amp_skin::{Bitmap, Skin};
 use amp_ui::main_window::{HEIGHT, WIDTH};
 use amp_ui::{
-    Action, DockDrag, EqAction, EqDown, EqWindow, LibAction, LibDown, LibraryRow, LibraryWindow,
-    MainWindow, MoveTracker, NowPlaying, PlDown, PlayState, PlaylistAction, PlaylistEntry,
-    PlaylistWindow, PointerDown, SelectMods, Selection, VisMode,
+    Action, AlbumRow, ArtistRow, DockDrag, EqAction, EqDown, EqWindow, LibAction, LibDown, LibView,
+    LibraryRow, LibraryWindow, MainWindow, MoveTracker, NowPlaying, PlDown, PlayState,
+    PlaylistAction, PlaylistEntry, PlaylistWindow, PointerDown, SelectMods, VisMode,
 };
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -143,6 +143,10 @@ struct App {
     mpris_position: (Option<TrackId>, Duration, Instant),
     /// Paths of the rows shown in the library window, by library id.
     lib_paths: HashMap<i64, PathBuf>,
+    /// The track whose play was last counted, and whether the library window should
+    /// refresh (play counts changed).
+    counted_play: Option<TrackId>,
+    lib_dirty: bool,
     /// Messages from a running library scan.
     scan: Option<Receiver<ScanMsg>>,
     folder_picks: (Sender<Vec<PathBuf>>, Receiver<Vec<PathBuf>>),
@@ -267,6 +271,23 @@ impl App {
         let status = self.player.status();
         if status.track.is_some() {
             self.current = status.track;
+        }
+        // Count a play in the library when a track starts.
+        if status.state == PlaybackState::Playing
+            && status.track.is_some()
+            && status.track != self.counted_play
+        {
+            self.counted_play = status.track;
+            if let (Some(lib), Some(info)) = (&self.library, status.info.as_deref()) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs() as i64);
+                match lib.record_play(&info.path, now) {
+                    Ok(true) => self.lib_dirty = true,
+                    Ok(false) => {}
+                    Err(e) => log::warn!("cannot record play: {e}"),
+                }
+            }
         }
         // Prefer what the decoder reports for the playing track.
         if let (Some(id), Some(info)) = (status.track, status.info.as_deref()) {
@@ -977,17 +998,12 @@ impl App {
             return;
         };
         let stats = lib.stats().unwrap_or_default();
-        self.lib.set_tree(
-            stats.tracks,
-            lib.artists().unwrap_or_default(),
-            lib.albums().unwrap_or_default(),
-            lib.genres().unwrap_or_default(),
-        );
         if self.scan.is_none() {
+            // Empty: say how to fill it; otherwise the window shows its item count.
             self.lib.set_status(if stats.tracks == 0 {
-                "Empty: Add folder or Rescan".to_owned()
+                "Library is empty: use Library > Add folder"
             } else {
-                format!("{} tracks", stats.tracks)
+                ""
             });
         }
     }
@@ -1045,17 +1061,12 @@ impl App {
         self.scan = None;
         self.refresh_library();
         match result {
-            Ok(r) => {
-                let total = self
-                    .library
-                    .as_ref()
-                    .and_then(|l| l.stats().ok())
-                    .map_or(0, |s| s.tracks);
-                self.lib.set_status(format!(
-                    "{total} tracks ({} new, {} removed)",
-                    r.added, r.removed
-                ));
-            }
+            Ok(r) => log::info!(
+                "library scan: {} new, {} updated, {} removed",
+                r.added,
+                r.updated,
+                r.removed
+            ),
             Err(e) => self.lib.set_status(format!("Scan failed: {e}")),
         }
         let q = self.lib.query();
@@ -1070,20 +1081,46 @@ impl App {
 
     fn act_lib(&mut self, action: LibAction) -> Result<()> {
         match action {
-            LibAction::Query { selection, text } => {
+            LibAction::Query {
+                view,
+                text,
+                artist,
+                album,
+            } => {
                 let Some(lib) = &self.library else {
                     return Ok(());
                 };
-                let mut filter = Filter {
+                let filter = Filter {
+                    view: match view {
+                        LibView::Audio => View::Audio,
+                        LibView::MostPlayed => View::MostPlayed,
+                        LibView::RecentlyAdded => View::RecentlyAdded,
+                        LibView::RecentlyPlayed => View::RecentlyPlayed,
+                        LibView::NeverPlayed => View::NeverPlayed,
+                    },
                     text,
-                    ..Filter::default()
+                    artist,
+                    album,
+                    genre: None,
                 };
-                match selection {
-                    Selection::All => {}
-                    Selection::Artist(a) => filter.artist = Some(a),
-                    Selection::Album(a) => filter.album = Some(a),
-                    Selection::Genre(g) => filter.genre = Some(g),
-                }
+                let artists = lib
+                    .artist_summary(&filter)?
+                    .into_iter()
+                    .map(|a| ArtistRow {
+                        name: a.name,
+                        albums: a.albums,
+                        tracks: a.tracks,
+                    })
+                    .collect();
+                let albums = lib
+                    .album_summary(&filter)?
+                    .into_iter()
+                    .map(|a| AlbumRow {
+                        name: a.name,
+                        year: a.year,
+                        tracks: a.tracks,
+                    })
+                    .collect();
                 let tracks = lib.tracks(&filter, 50_000)?;
                 self.lib_paths = tracks.iter().map(|t| (t.id, t.path.clone())).collect();
                 let rows = tracks
@@ -1091,12 +1128,26 @@ impl App {
                     .map(|t| LibraryRow {
                         id: t.id,
                         artist: t.tags.artist.clone().unwrap_or_default(),
-                        title: t.tags.title.clone().unwrap_or_else(|| file_stem(&t.path)),
                         album: t.tags.album.clone().unwrap_or_default(),
+                        track: t.tags.track,
+                        title: t.tags.title.clone().unwrap_or_else(|| file_stem(&t.path)),
                         duration: t.tags.duration,
+                        genre: t.tags.genre.clone().unwrap_or_default(),
+                        year: t.tags.year,
+                        plays: t.plays.play_count,
+                        size: t.size,
                     })
                     .collect();
+                self.lib.set_filters(artists, albums);
                 self.lib.set_tracks(rows);
+            }
+            LibAction::PlayAll => {
+                let play = self.lib.play_all();
+                self.act_lib(play)?;
+            }
+            LibAction::LibraryMenu => {
+                let at = self.platform.pointer()?;
+                self.open_menu(MenuKind::Library, at, true)?;
             }
             LibAction::Play { ids, start } => {
                 let paths = self.lib_paths_for(&ids);
@@ -1114,11 +1165,6 @@ impl App {
                 let paths = self.lib_paths_for(&ids);
                 self.player.enqueue(paths);
             }
-            LibAction::AddFolder => {
-                let start = self.dirs.music.clone();
-                amp_app::dialog::pick_folder(start, self.folder_picks.0.clone());
-            }
-            LibAction::Rescan => self.start_scan(),
             LibAction::Close => self.set_panel_visible(LIB, false)?,
             LibAction::Resize(w, h) => {
                 self.layout
@@ -1427,6 +1473,12 @@ impl App {
                 self.folder_picked(folders)?;
             }
             self.poll_scan()?;
+            if std::mem::take(&mut self.lib_dirty)
+                && self.wins.iter().any(|w| w.panel == LIB && w.visible)
+            {
+                let q = self.lib.query();
+                self.act_lib(q)?;
+            }
             #[cfg(target_os = "linux")]
             self.sync_mpris()?;
             if self.last_save.elapsed() > Duration::from_secs(30) {
@@ -1793,6 +1845,8 @@ fn main() -> Result<()> {
         pick_mode: None,
         last_dir,
         playlist_dir: None,
+        counted_play: None,
+        lib_dirty: false,
         dirs,
         last_status: Status {
             state: PlaybackState::Stopped,
