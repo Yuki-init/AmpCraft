@@ -58,10 +58,11 @@ pub enum Control {
     Balance,
     Position,
     About,
+    Visualizer,
 }
 
 impl Control {
-    pub const ALL: [Control; 24] = [
+    pub const ALL: [Control; 25] = [
         Control::Options,
         Control::Minimize,
         Control::Shade,
@@ -86,6 +87,7 @@ impl Control {
         Control::Balance,
         Control::Position,
         Control::About,
+        Control::Visualizer,
     ];
 
     /// Where the control sits in the window.
@@ -115,6 +117,7 @@ impl Control {
             Control::Balance => (177, 57, 38, 13),
             Control::Position => (16, 72, 248, 10),
             Control::About => (253, 91, 13, 15),
+            Control::Visualizer => (24, 43, 76, 16),
         };
         Rect::new(x, y, w, h)
     }
@@ -203,6 +206,7 @@ struct Pressed {
 pub struct MainWindow {
     pub now: NowPlaying,
     pub focused: bool,
+    pub vis: crate::vis::Visualizer,
     volume: f32,
     balance: f32,
     shuffle: bool,
@@ -249,6 +253,7 @@ impl MainWindow {
         Self {
             now: NowPlaying::default(),
             focused: true,
+            vis: crate::vis::Visualizer::new(),
             volume: 0.5,
             balance: 0.0,
             shuffle: false,
@@ -458,6 +463,10 @@ impl MainWindow {
                 Action::SetPlaylistVisible(self.playlist_visible)
             }
             Control::About => Action::About,
+            Control::Visualizer => {
+                self.vis.cycle();
+                return None;
+            }
             Control::Volume | Control::Balance | Control::Position => return None,
         })
     }
@@ -605,6 +614,7 @@ impl MainWindow {
             }
         }
 
+        self.vis.render(&mut b, skin.vis_colors());
         draw(&mut b, main::CLUTTER_BAR, 10, 22);
         for (c, on) in [
             (Control::ClutterO, main::CLUTTER_O_ON),

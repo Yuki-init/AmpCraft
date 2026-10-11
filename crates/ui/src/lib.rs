@@ -7,6 +7,7 @@ pub mod move_tracker;
 pub mod playlist_window;
 pub mod render;
 pub mod text;
+pub mod vis;
 
 pub use dock_drag::{DockDrag, Moves};
 pub use eq_window::{EqAction, EqDown, EqWindow};
@@ -15,6 +16,7 @@ pub use move_tracker::MoveTracker;
 pub use playlist_window::{PlDown, PlaylistAction, PlaylistEntry, PlaylistWindow, SelectMods};
 pub use render::scale_nearest;
 pub use text::{Mask, NoFallback, TextRenderer};
+pub use vis::{VisMode, Visualizer};
 
 /// Generated skins for tests: every pixel encodes its sheet and coordinates.
 #[cfg(test)]

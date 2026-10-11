@@ -14,7 +14,7 @@ use amp_app::system_font::SystemFont;
 use amp_audio_out::{AudioOutput, Controls, OutputDevice};
 use amp_core::{PlaybackState, Player, PlayerConfig, Repeat, Status, TrackId};
 use amp_dock::{Layout, PanelId, Rect};
-use amp_dsp::{EqControls, Equalizer};
+use amp_dsp::{AnalyzerReader, EqControls, Equalizer, FFT_SIZE, Spectrum};
 use amp_platform::AppDirs;
 use amp_platform::x11::X11Platform;
 use amp_platform::{
@@ -110,6 +110,10 @@ struct App {
     last_dir: Option<PathBuf>,
     dirs: AppDirs,
     last_status: Status,
+    analyzer: AnalyzerReader,
+    spectrum: Spectrum,
+    vis_samples: Vec<f32>,
+    last_vis: Instant,
     started: Instant,
     quit: bool,
 }
@@ -261,7 +265,28 @@ impl App {
             channels: info.map_or(0, |i| i.channels),
         };
         self.pl.now = self.main.now.clone();
+        self.update_vis(status.state);
         self.last_status = status;
+    }
+
+    fn update_vis(&mut self, state: PlaybackState) {
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_vis).as_secs_f32() * 1000.0;
+        self.last_vis = now;
+        self.analyzer.update();
+        if state == PlaybackState::Playing {
+            self.analyzer.latest(&mut self.vis_samples);
+            let n = self.vis_samples.len();
+            let levels = self.spectrum.bars(&self.vis_samples[n - FFT_SIZE..]);
+            self.main
+                .vis
+                .update(&levels, &self.vis_samples[n - 576..], dt);
+        } else {
+            if state == PlaybackState::Stopped {
+                self.analyzer.clear();
+            }
+            self.main.vis.update(&[0.0; amp_dsp::BARS], &[], dt);
+        }
     }
 
     fn redraw(&mut self, force: bool) -> Result<()> {
@@ -613,6 +638,7 @@ impl App {
 
     fn frame_timeout(&self) -> Duration {
         let animating = self.main.now.state != PlayState::Stopped
+            || self.main.vis.is_active()
             || self.drag.is_dragging()
             || [MAIN, EQ, PL].iter().any(|p| self.interacting(*p))
             || self.pick_mode.is_some();
@@ -669,6 +695,7 @@ fn main() -> Result<()> {
     let scale = i32::from(args.scale);
 
     let eq_controls = EqControls::new();
+    let (mut tap, analyzer) = amp_dsp::analyzer();
     let device = match args.audio {
         AudioArg::Device => {
             Some(OutputDevice::open(args.device.as_deref()).context("opening audio device")?)
@@ -686,12 +713,17 @@ fn main() -> Result<()> {
             let out = d.start(move |buf| {
                 source.fill(buf);
                 eq.process(buf);
+                tap.push(buf);
             })?;
             let controls = Arc::clone(out.controls());
             (Output::Device(out), controls)
         }
         None => {
-            let sink = NullSink::start(source, true)?;
+            let mut eq = Equalizer::new(rate, Arc::clone(&eq_controls));
+            let sink = NullSink::start_with(source, true, move |buf| {
+                eq.process(buf);
+                tap.push(buf);
+            })?;
             let controls = Arc::clone(sink.controls());
             (Output::Null(sink), controls)
         }
@@ -799,6 +831,10 @@ fn main() -> Result<()> {
             position: Duration::ZERO,
             info: None,
         },
+        analyzer,
+        spectrum: Spectrum::new(rate),
+        vis_samples: vec![0.0; FFT_SIZE.max(576)],
+        last_vis: Instant::now(),
         started: Instant::now(),
         quit: false,
     };

@@ -20,7 +20,17 @@ pub struct NullSink {
 impl NullSink {
     /// Starts pulling from `source`: in 10 ms periods when `realtime`, otherwise as fast as
     /// audio is decoded.
-    pub fn start(mut source: PcmSource, realtime: bool) -> std::io::Result<Self> {
+    pub fn start(source: PcmSource, realtime: bool) -> std::io::Result<Self> {
+        Self::start_with(source, realtime, |_| {})
+    }
+
+    /// Like [`Self::start`], running `post` on each block after it is pulled (for the
+    /// equalizer and visualizer tap, as a real output would).
+    pub fn start_with(
+        mut source: PcmSource,
+        realtime: bool,
+        mut post: impl FnMut(&mut [f32]) + Send + 'static,
+    ) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         let rate = source.sample_rate();
@@ -33,6 +43,7 @@ impl NullSink {
                 let mut next = Instant::now();
                 while !flag.load(Ordering::Relaxed) {
                     let n = source.fill(&mut buf);
+                    post(&mut buf);
                     if realtime {
                         next += period;
                         if let Some(wait) = next.checked_duration_since(Instant::now()) {
