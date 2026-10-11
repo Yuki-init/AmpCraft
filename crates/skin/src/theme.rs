@@ -589,28 +589,31 @@ fn titlebar_bmp(c: &Colors, name: &str) -> Bitmap {
         small_button(c, &mut b, 27 + 254, y + 3, BTN_UNSHADE, false);
         small_button(c, &mut b, 27 + 264, y + 3, BTN_CLOSE, false);
     }
-    // Clutter bar: O A I D V, normal and disabled, plus the lit letters.
+    // Clutter bar: O A I D V, normal and disabled, plus the lit letters. Each letter is
+    // centered in its button cell (top relative to the bar, height); lit cells keep the bar's
+    // edges so they line up with it.
     let letters = [
-        ("O", 4, 25 - 22, 8),
-        ("A", 11, 33 - 22, 7),
-        ("I", 18, 40 - 22, 7),
-        ("D", 26, 47 - 22, 8),
-        ("V", 33, 55 - 22, 7),
+        ("O", 3, 8),
+        ("A", 11, 7),
+        ("I", 18, 7),
+        ("D", 25, 8),
+        ("V", 33, 7),
     ];
     for (x, color) in [(304, p.subtext), (312, p.overlay)] {
         raised(&mut b, Rect::new(x, 0, 8, 43), p.surface, c.light, c.dark);
-        for (l, ty, _, _) in letters {
+        for (l, top, h) in letters {
             let w = text_width(l);
-            text(&mut b, l, x + (8 - w) / 2, ty - 1, color);
+            text(&mut b, l, x + (8 - w) / 2, top + (h - 5) / 2, color);
         }
     }
-    for (i, (l, _, top, h)) in letters.iter().enumerate() {
+    for (i, (l, _, h)) in letters.iter().enumerate() {
         let x = 304 + i as i32 * 8;
         let y = [47, 55, 62, 69, 77][i];
         b.fill_rect(Rect::new(x, y, 8, *h), p.accent);
+        b.fill_rect(Rect::new(x, y, 1, *h), c.light);
+        b.fill_rect(Rect::new(x + 7, y, 1, *h), c.dark);
         let w = text_width(l);
         text(&mut b, l, x + (8 - w) / 2, y + (*h - 5) / 2, p.crust);
-        let _ = top;
     }
     // Shade position slider: groove and three 3x7 thumbs.
     sunken(&mut b, Rect::new(0, 36, 17, 7), p.crust, c.light, c.dark);
@@ -1276,6 +1279,41 @@ mod tests {
             Sheet::Pledit => (280, 186),
             Sheet::Gen => (194, 109),
             Sheet::GenEx => (130, 75),
+        }
+    }
+
+    #[test]
+    fn lit_clutter_buttons_line_up_with_the_bar() {
+        // Lit cells (sheet x, y, height) and where they sit in the bar (top offset).
+        let cells = [
+            (304, 47, 8, 3),
+            (312, 55, 7, 11),
+            (320, 62, 7, 18),
+            (328, 69, 8, 25),
+            (336, 77, 7, 33),
+        ];
+        for t in THEMES {
+            let sheets = t.sheets();
+            let b = &sheets[&Sheet::Titlebar];
+            let bar = |x, y| b.get(304 + x, y);
+            for (lx, ly, h, top) in cells {
+                for dy in 0..h {
+                    // The bar's left and right edges show through the lit cell.
+                    for x in [0, 7] {
+                        assert_eq!(b.get(lx + x, ly + dy), bar(x, top + dy), "{} edge", t.id);
+                    }
+                }
+                // The lit letter is on the same rows as the unlit one.
+                let rows = |x0: i32, y0: i32, bg: Option<u32>| -> Vec<i32> {
+                    (0..h)
+                        .filter(|&dy| (2..6).any(|dx| b.get(x0 + dx, y0 + dy) != bg))
+                        .collect()
+                };
+                let lit = rows(lx, ly, b.get(lx + 1, ly));
+                let unlit = rows(304, top, bar(1, top + h / 2));
+                assert_eq!(lit, unlit, "{} letter at {lx}", t.id);
+                assert!(!lit.is_empty());
+            }
         }
     }
 
