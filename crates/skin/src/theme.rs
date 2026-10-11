@@ -919,18 +919,40 @@ fn eqmain_bmp(c: &Colors) -> Bitmap {
 }
 
 fn eq_ex_bmp(c: &Colors) -> Bitmap {
-    let mut b = Bitmap::new(275, 82, c.p.base);
+    let p = c.p;
+    let mut b = Bitmap::new(275, 82, p.base);
+    // Shade bar: stripes either side of the volume (61..158) and balance (164..207)
+    // grooves, as in the classic layout.
     for (y, active) in [(0, true), (15, false)] {
-        title_bar(
-            c,
+        b.fill_rect(Rect::new(0, y, 275, 14), p.base);
+        b.fill_rect(Rect::new(0, y, 275, 1), c.light);
+        b.fill_rect(Rect::new(0, y + 13, 275, 1), c.dark);
+        let stripe = if active { c.stripe } else { c.stripe_off };
+        for (from, to) in [(6, 57), (210, 251)] {
+            b.fill_rect(Rect::new(from, y + 5, to - from, 1), stripe);
+            b.fill_rect(Rect::new(from, y + 8, to - from, 1), stripe);
+        }
+        sunken(
             &mut b,
-            Rect::new(0, y, 275, 14),
-            "EQUALIZER",
-            active,
-            true,
+            Rect::new(61, y + 4, 97, 7),
+            p.crust,
+            c.light,
+            c.dark,
+        );
+        sunken(
+            &mut b,
+            Rect::new(164, y + 4, 43, 7),
+            p.crust,
+            c.light,
+            c.dark,
         );
         small_button(c, &mut b, 254, y + 3, BTN_UNSHADE, false);
         small_button(c, &mut b, 264, y + 3, BTN_CLOSE, false);
+    }
+    // Slider thumbs (3x7) for low, middle and high values: volume, then balance.
+    for (i, x) in [1, 4, 7, 11, 14, 17].into_iter().enumerate() {
+        let fill = if i % 3 == 1 { p.accent } else { p.text };
+        raised(&mut b, Rect::new(x, 30, 3, 7), fill, c.light, c.dark);
     }
     small_button(c, &mut b, 1, 38, BTN_UNSHADE, true);
     small_button(c, &mut b, 11, 38, BTN_CLOSE, false);

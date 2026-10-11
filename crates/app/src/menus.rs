@@ -36,6 +36,15 @@ pub(crate) enum MenuCmd {
     RefreshTitles,
     LibraryAddFolder,
     LibraryRescan,
+    EqLoadBuiltin(usize),
+    EqLoadUser(usize),
+    EqLoadFile,
+    EqSaveAs,
+    EqSaveAuto,
+    EqSaveFile,
+    EqDeleteUser(usize),
+    EqDeleteAuto,
+    EqReset,
 }
 
 /// The settings menus show ticks for.
@@ -200,6 +209,7 @@ pub(crate) enum MenuKind {
     PlaylistRemove,
     PlaylistMisc,
     Library,
+    EqPresets,
 }
 
 /// An open menu and how it was opened.
@@ -265,6 +275,7 @@ impl App {
             MenuKind::PlaylistRemove => playlist_remove_menu(),
             MenuKind::PlaylistMisc => playlist_misc_menu(&s),
             MenuKind::Library => library_menu(),
+            MenuKind::EqPresets => self.eq_presets_menu(),
         };
         let screens = self.platform.screens()?;
         let screen = screens
@@ -498,6 +509,15 @@ impl App {
                 amp_app::dialog::pick_folder(start, self.folder_picks.0.clone());
             }
             MenuCmd::LibraryRescan => self.start_scan(),
+            MenuCmd::EqLoadBuiltin(_)
+            | MenuCmd::EqLoadUser(_)
+            | MenuCmd::EqLoadFile
+            | MenuCmd::EqSaveAs
+            | MenuCmd::EqSaveAuto
+            | MenuCmd::EqSaveFile
+            | MenuCmd::EqDeleteUser(_)
+            | MenuCmd::EqDeleteAuto
+            | MenuCmd::EqReset => self.run_eq_menu(cmd)?,
             MenuCmd::RefreshTitles => {
                 // Forget probed tags; the next update probes every entry again.
                 self.meta.clear();

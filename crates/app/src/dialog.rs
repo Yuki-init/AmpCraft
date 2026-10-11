@@ -105,15 +105,61 @@ pub fn pick_folder(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
 
 /// Asks for a playlist file to load (.m3u, .m3u8, .pls). Sends the choice on `done`.
 pub fn pick_playlist(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
-    playlist_dialog(start, done, false)
+    file_dialog(
+        start,
+        "Load playlist",
+        "Playlists",
+        &["m3u", "m3u8", "pls"],
+        None,
+        done,
+    )
 }
 
 /// Asks where to save the playlist. Sends the chosen path (possibly without an extension).
 pub fn pick_playlist_save(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
-    playlist_dialog(start, done, true)
+    file_dialog(
+        start,
+        "Save playlist",
+        "Playlists",
+        &["m3u", "m3u8", "pls"],
+        Some("playlist.m3u8"),
+        done,
+    )
 }
 
-fn playlist_dialog(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>, save: bool) -> bool {
+/// Asks for an equalizer preset file (.eqf, or a .q1 preset library) to load.
+pub fn pick_eqf(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
+    file_dialog(
+        start,
+        "Load equalizer preset",
+        "EQ presets",
+        &["eqf", "q1"],
+        None,
+        done,
+    )
+}
+
+/// Asks where to save an equalizer preset file.
+pub fn pick_eqf_save(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
+    file_dialog(
+        start,
+        "Save equalizer preset",
+        "EQ presets",
+        &["eqf"],
+        Some("preset.eqf"),
+        done,
+    )
+}
+
+/// An open dialog, or a save dialog when `save_name` gives the suggested file name.
+fn file_dialog(
+    start: Option<PathBuf>,
+    title: &str,
+    filter: &str,
+    extensions: &[&str],
+    save_name: Option<&str>,
+    done: Sender<Vec<PathBuf>>,
+) -> bool {
     let helper = ["kdialog", "zenity"]
         .into_iter()
         .find(|h| which(h).is_some());
@@ -124,38 +170,69 @@ fn playlist_dialog(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>, save: boo
     let start = start
         .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("/"));
-    let title = if save {
-        "Save playlist"
-    } else {
-        "Load playlist"
-    };
-    let filter = "Playlists (*.m3u *.m3u8 *.pls)";
+    let patterns: Vec<String> = extensions.iter().map(|e| format!("*.{e}")).collect();
     let mut cmd = Command::new(helper);
     if helper == "kdialog" {
-        let start = if save {
-            start.join("playlist.m3u8")
-        } else {
-            start
+        let start = match save_name {
+            Some(name) => start.join(name),
+            None => start,
         };
-        cmd.arg(if save {
+        cmd.arg(if save_name.is_some() {
             "--getsavefilename"
         } else {
             "--getopenfilename"
         })
         .arg(&start)
-        .arg(filter)
+        .arg(format!("{filter} ({})", patterns.join(" ")))
         .args(["--title", title]);
     } else {
         cmd.args(["--file-selection", &format!("--title={title}")])
             .arg(format!("--filename={}/", start.display()))
-            .arg("--file-filter=Playlists | *.m3u *.m3u8 *.pls")
+            .arg(format!("--file-filter={filter} | {}", patterns.join(" ")))
             .arg("--file-filter=All files | *");
-        if save {
+        if save_name.is_some() {
             cmd.args(["--save", "--confirm-overwrite"]);
         }
     }
+    spawn_first_line(cmd, "file-dialog", done)
+}
+
+/// Asks for a line of text (a preset name). Sends it, or nothing when cancelled.
+pub fn ask_text(title: &str, label: &str, default: &str, done: Sender<Vec<String>>) -> bool {
+    let helper = ["kdialog", "zenity"]
+        .into_iter()
+        .find(|h| which(h).is_some());
+    let Some(helper) = helper else {
+        log::warn!("no dialog helper found: install kdialog or zenity");
+        return false;
+    };
+    let mut cmd = Command::new(helper);
+    if helper == "kdialog" {
+        cmd.args(["--title", title, "--inputbox", label, default]);
+    } else {
+        cmd.args(["--entry", &format!("--title={title}")])
+            .arg(format!("--text={label}"))
+            .arg(format!("--entry-text={default}"));
+    }
     std::thread::Builder::new()
-        .name("playlist-dialog".into())
+        .name("text-dialog".into())
+        .spawn(move || {
+            let text = match cmd.output() {
+                Ok(out) if out.status.success() => {
+                    let t = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+                    if t.is_empty() { Vec::new() } else { vec![t] }
+                }
+                _ => Vec::new(),
+            };
+            let _ = done.send(text);
+        })
+        .is_ok()
+}
+
+/// Runs `cmd` on a thread and sends the first line it prints as a path (or nothing).
+fn spawn_first_line(mut cmd: Command, name: &str, done: Sender<Vec<PathBuf>>) -> bool {
+    std::thread::Builder::new()
+        .name(name.into())
         .spawn(move || {
             let paths = match cmd.output() {
                 Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)

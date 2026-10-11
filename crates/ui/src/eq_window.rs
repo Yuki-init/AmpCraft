@@ -22,6 +22,9 @@ pub enum EqControl {
     Presets,
     Preamp,
     Band(usize),
+    /// The shade bar's volume and balance sliders.
+    ShadeVolume,
+    ShadeBalance,
 }
 
 impl EqControl {
@@ -36,6 +39,8 @@ impl EqControl {
             EqControl::Band(i) => {
                 Rect::new(78 + 18 * i as i32, SLIDER_Y, sp::SLIDER_W, sp::SLIDER_H)
             }
+            EqControl::ShadeVolume => Rect::new(61, 4, 97, 7),
+            EqControl::ShadeBalance => Rect::new(164, 4, 43, 7),
         }
     }
 
@@ -64,6 +69,9 @@ pub enum EqAction {
     SetAuto(bool),
     SetPreamp(f32),
     SetBand(usize, f32),
+    /// The shade bar's sliders: volume 0.0 to 1.0, balance -1.0 (left) to 1.0.
+    SetVolume(f32),
+    SetBalance(f32),
     Presets,
     Close,
     ToggleShade,
@@ -83,6 +91,9 @@ pub struct EqWindow {
     pub bands_db: [f32; 10],
     pub focused: bool,
     pub shaded: bool,
+    /// Volume and balance, shown on the shade bar; the app keeps them current.
+    pub volume: f32,
+    pub balance: f32,
     pressed: Option<(EqControl, bool)>,
     /// Slider being dragged.
     slider: Option<EqControl>,
@@ -105,9 +116,14 @@ impl EqWindow {
 
     fn hit(&self, p: Point) -> Option<EqControl> {
         if self.shaded {
-            return [EqControl::Close, EqControl::Shade]
-                .into_iter()
-                .find(|c| c.contains(p));
+            return [
+                EqControl::Close,
+                EqControl::Shade,
+                EqControl::ShadeVolume,
+                EqControl::ShadeBalance,
+            ]
+            .into_iter()
+            .find(|c| c.contains(p));
         }
         EqControl::all().find(|c| c.contains(p))
     }
@@ -124,6 +140,7 @@ impl EqWindow {
             self.shaded,
             self.pressed.map(|(c, inside)| (format!("{c:?}"), inside)),
             self.slider.map(|c| format!("{c:?}")),
+            (self.volume.to_bits(), self.balance.to_bits()),
         ))
     }
 
@@ -138,8 +155,26 @@ impl EqWindow {
         if db.abs() < 1.0 { 0.0 } else { db }
     }
 
-    fn slide(&mut self, control: EqControl, y: i32) -> Vec<EqAction> {
-        let db = Self::db_at(y);
+    fn slide(&mut self, control: EqControl, p: Point) -> Vec<EqAction> {
+        // Shade sliders: the thumb (3 px) centered on the pointer.
+        let along = |c: EqControl| {
+            let r = c.rect();
+            ((p.x - r.x - 1) as f32 / (r.w - 3) as f32).clamp(0.0, 1.0)
+        };
+        match control {
+            EqControl::ShadeVolume => {
+                self.volume = along(control);
+                return vec![EqAction::SetVolume(self.volume)];
+            }
+            EqControl::ShadeBalance => {
+                let b = along(control) * 2.0 - 1.0;
+                // Sticky center, as on the main window.
+                self.balance = if b.abs() < 0.08 { 0.0 } else { b };
+                return vec![EqAction::SetBalance(self.balance)];
+            }
+            _ => {}
+        }
+        let db = Self::db_at(p.y);
         match control {
             EqControl::Preamp => {
                 self.preamp_db = db;
@@ -158,9 +193,12 @@ impl EqWindow {
             return (EqDown::DragWindow, Vec::new());
         };
         match control {
-            EqControl::Preamp | EqControl::Band(_) => {
+            EqControl::Preamp
+            | EqControl::Band(_)
+            | EqControl::ShadeVolume
+            | EqControl::ShadeBalance => {
                 self.slider = Some(control);
-                (EqDown::Control(control), self.slide(control, p.y))
+                (EqDown::Control(control), self.slide(control, p))
             }
             _ => {
                 self.pressed = Some((control, true));
@@ -171,7 +209,7 @@ impl EqWindow {
 
     pub fn pointer_move(&mut self, p: Point) -> Vec<EqAction> {
         if let Some(c) = self.slider {
-            return self.slide(c, p.y);
+            return self.slide(c, p);
         }
         if let Some((c, _)) = self.pressed {
             self.pressed = Some((c, c.contains(p)));
@@ -181,7 +219,7 @@ impl EqWindow {
 
     pub fn pointer_up(&mut self, p: Point) -> Vec<EqAction> {
         if let Some(c) = self.slider.take() {
-            return self.slide(c, p.y);
+            return self.slide(c, p);
         }
         let Some((c, _)) = self.pressed.take() else {
             return Vec::new();
@@ -228,6 +266,29 @@ impl EqWindow {
                 sp::SHADE_CLOSE
             };
             skin.draw(&mut b, close, 264, 3);
+            // Volume and balance thumbs: the sprite follows the value (low, middle, high).
+            let v = self.volume.clamp(0.0, 1.0);
+            let vol = EqControl::ShadeVolume.rect();
+            let vi = if v < 1.0 / 3.0 {
+                0
+            } else if v < 2.0 / 3.0 {
+                1
+            } else {
+                2
+            };
+            let vx = vol.x + (v * (vol.w - 3) as f32).round() as i32;
+            skin.draw(&mut b, sp::SHADE_VOLUME_THUMBS[vi], vx, vol.y);
+            let bal = self.balance.clamp(-1.0, 1.0);
+            let br = EqControl::ShadeBalance.rect();
+            let bi = if bal < -0.25 {
+                0
+            } else if bal > 0.25 {
+                2
+            } else {
+                1
+            };
+            let bx = br.x + ((bal + 1.0) / 2.0 * (br.w - 3) as f32).round() as i32;
+            skin.draw(&mut b, sp::SHADE_BALANCE_THUMBS[bi], bx, br.y);
             return crate::render::scale_nearest(&b, scale);
         }
         let mut b = Bitmap::new(WIDTH as u32, HEIGHT as u32, 0xFF00_0000);
@@ -262,9 +323,12 @@ impl EqWindow {
             (true, true) => sp::AUTO_ACTIVE_PRESSED,
         };
         draw(&mut b, auto, 40, 18);
-        if self.pressed_on(EqControl::Presets) {
-            draw(&mut b, sp::PRESETS_PRESSED, 217, 18);
-        }
+        let presets = if self.pressed_on(EqControl::Presets) {
+            sp::PRESETS_PRESSED
+        } else {
+            sp::PRESETS
+        };
+        draw(&mut b, presets, 217, 18);
 
         // Response graph: preamp line, then the band curve colored by height.
         draw(&mut b, sp::GRAPH_BACKGROUND, GRAPH.x, GRAPH.y);
@@ -338,6 +402,45 @@ mod tests {
     fn center(c: EqControl) -> Point {
         let r = c.rect();
         Point::new(r.x + r.w / 2, r.y + r.h / 2)
+    }
+
+    #[test]
+    fn shade_bar_volume_and_balance() {
+        let skin = coded_skin();
+        let mut w = EqWindow::new();
+        w.shaded = true;
+        w.volume = 1.0;
+        let b = w.render(&skin, 1);
+        // Full volume: the "high" thumb at the right end of the groove.
+        assert_eq!(b.get(61 + 94, 4), Some(code(Sheet::EqEx, 7, 30)));
+        // Centered balance: the middle thumb in the middle.
+        assert_eq!(b.get(164 + 20, 4), Some(code(Sheet::EqEx, 14, 30)));
+        // Dragging sets them.
+        let (_, a) = w.pointer_down(Point::new(61 + 1, 7));
+        assert_eq!(a, vec![EqAction::SetVolume(0.0)]);
+        assert_eq!(
+            w.pointer_move(Point::new(300, 7)),
+            vec![EqAction::SetVolume(1.0)]
+        );
+        w.pointer_up(Point::new(300, 7));
+        let (_, a) = w.pointer_down(Point::new(164 + 1, 6));
+        assert_eq!(a, vec![EqAction::SetBalance(-1.0)]);
+        assert_eq!(
+            w.pointer_move(Point::new(164 + 22, 6)),
+            vec![EqAction::SetBalance(0.0)],
+            "sticky center"
+        );
+    }
+
+    #[test]
+    fn presets_button_is_always_drawn() {
+        let skin = coded_skin();
+        let mut w = EqWindow::new();
+        let b = w.render(&skin, 1);
+        assert_eq!(b.get(217, 18), Some(code(Sheet::EqMain, 224, 164)));
+        w.pointer_down(center(EqControl::Presets));
+        let b = w.render(&skin, 1);
+        assert_eq!(b.get(217, 18), Some(code(Sheet::EqMain, 224, 176)));
     }
 
     #[test]

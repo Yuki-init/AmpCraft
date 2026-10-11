@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod dialog;
+pub mod eq_presets;
 pub mod files;
 pub mod info;
 pub mod logging;

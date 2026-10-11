@@ -43,6 +43,13 @@ Playback (repeat, shuffle, visualizer, output device), Skins (built-in themes, l
 `.wsz`) and Media Library (folders, rescan). Changes apply at once and are saved, except the
 output device, which is used from the next start.
 
+The equalizer's PRESETS button loads one of 18 built-in presets (Classical, Club, Dance,
+Flat, Full Bass, Full Bass & Treble, Full Treble, Headphones, Large Hall, Live, Party, Pop,
+Reggae, Rock, Ska, Soft, Soft Rock, Techno), saves and deletes your own (kept in
+`eq-presets.toml` in the config folder), saves an auto-load preset for the current track
+(applied whenever that file plays while AUTO is on), and imports or exports Winamp `.eqf`
+files. Shaded, the equalizer shows volume and balance sliders.
+
 The playlist's bottom buttons open their classic menus (click to open, then click an item,
 or press and drag to an item): **ADD** URL, folder or files; **REM** all, crop to the
 selection, selected, or misc (missing files, duplicates); **SEL** invert, none, all; **MISC**

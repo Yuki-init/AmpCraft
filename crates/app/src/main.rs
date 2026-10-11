@@ -33,6 +33,7 @@ use amp_ui::{
 use anyhow::{Context, Result};
 use clap::Parser;
 
+mod eq;
 mod menus;
 mod prefs;
 use menus::MenuKind;
@@ -103,6 +104,10 @@ enum PickMode {
     SaveList,
     /// Preferences > Skins: load this skin file.
     Skin,
+    /// Equalizer PRESETS > Load > From file.
+    EqfLoad,
+    /// Equalizer PRESETS > Save > To file.
+    EqfSave,
 }
 
 struct Win {
@@ -160,6 +165,9 @@ struct App {
     scale: i32,
     /// The scale came from the user (flag or toggle) rather than the screen.
     scale_pinned: bool,
+    /// Saved and auto-load equalizer presets, and answers from the preset name prompt.
+    eq_presets: amp_app::eq_presets::PresetStore,
+    names: (Sender<Vec<String>>, Receiver<Vec<String>>),
     prefs: amp_ui::PrefsWindow,
     prefs_win: prefs::PrefsWin,
     /// The open popup menu, its windows (one per level, reused) and how many are shown.
@@ -284,6 +292,10 @@ impl App {
             && status.track != self.counted_play
         {
             self.counted_play = status.track;
+            if let Some(info) = status.info.as_deref() {
+                let path = info.path.clone();
+                self.auto_load_eq(&path);
+            }
             if let (Some(lib), Some(info)) = (&self.library, status.info.as_deref()) {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -346,6 +358,9 @@ impl App {
             }
         }
         self.pl.set_current(self.current);
+        // The equalizer's shade bar shows volume and balance too.
+        self.eq.volume = self.controls.volume();
+        self.eq.balance = self.controls.balance();
 
         let shown = self.current.or_else(|| queued.first().map(|(id, _)| *id));
         let position = shown.and_then(|id| queued.iter().position(|(q, _)| *q == id));
@@ -479,6 +494,14 @@ impl App {
             return Ok(());
         }
         match mode {
+            Some(PickMode::EqfLoad) => {
+                self.load_eqf(&paths[0]);
+                return Ok(());
+            }
+            Some(PickMode::EqfSave) => {
+                self.save_eqf(paths[0].clone());
+                return Ok(());
+            }
             Some(PickMode::Skin) => return self.load_skin_file(paths[0].clone()),
             Some(PickMode::LoadList) => return self.load_playlist(&paths[0]),
             Some(PickMode::SaveList) => {
@@ -685,7 +708,24 @@ impl App {
             EqAction::SetBand(i, db) => self.eq_controls.set_band_db(i, db),
             EqAction::Close => self.set_panel_visible(EQ, false)?,
             EqAction::ToggleShade => self.toggle_shade(EQ)?,
-            other => log::info!("{other:?}: not implemented yet"),
+            EqAction::SetVolume(v) => {
+                self.main.set_volume(v);
+                self.act(Action::SetVolume(v))?;
+            }
+            EqAction::SetBalance(v) => {
+                self.main.set_balance(v);
+                self.act(Action::SetBalance(v))?;
+            }
+            EqAction::Presets => {
+                let at = self.platform.pointer()?;
+                self.open_menu(MenuKind::EqPresets, at, true)?;
+            }
+            EqAction::SetAuto(on) => {
+                self.eq.auto = on;
+                if let Some(path) = self.last_status.info.as_deref().map(|i| i.path.clone()) {
+                    self.auto_load_eq(&path);
+                }
+            }
         }
         Ok(())
     }
@@ -1510,6 +1550,11 @@ impl App {
             if let Ok(paths) = self.picks.1.try_recv() {
                 self.picked(paths)?;
             }
+            if let Ok(names) = self.names.1.try_recv()
+                && let Some(name) = names.first()
+            {
+                self.preset_named(name);
+            }
             if let Ok(folders) = self.folder_picks.1.try_recv() {
                 self.folder_picked(folders)?;
             }
@@ -1882,6 +1927,8 @@ fn main() -> Result<()> {
         tracker: MoveTracker::new(),
         scale,
         scale_pinned: pinned_scale.is_some(),
+        eq_presets: amp_app::eq_presets::PresetStore::load(&eq::presets_file(&dirs)),
+        names: mpsc::channel(),
         prefs: amp_ui::PrefsWindow::new(),
         prefs_win: prefs::PrefsWin::default(),
         menu: None,

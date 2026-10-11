@@ -406,6 +406,17 @@ pub mod eq {
     pub const SHADE_UNSHADE_PRESSED: Sprite = s(super::Sheet::EqEx, 1, 38, 9, 9);
     pub const SHADE_CLOSE: Sprite = s(super::Sheet::EqEx, 11, 38, 9, 9);
     pub const SHADE_CLOSE_PRESSED: Sprite = s(super::Sheet::EqEx, 11, 47, 9, 9);
+    /// Shade-bar slider thumbs for low, middle and high values.
+    pub const SHADE_VOLUME_THUMBS: [Sprite; 3] = [
+        s(super::Sheet::EqEx, 1, 30, 3, 7),
+        s(super::Sheet::EqEx, 4, 30, 3, 7),
+        s(super::Sheet::EqEx, 7, 30, 3, 7),
+    ];
+    pub const SHADE_BALANCE_THUMBS: [Sprite; 3] = [
+        s(super::Sheet::EqEx, 11, 30, 3, 7),
+        s(super::Sheet::EqEx, 14, 30, 3, 7),
+        s(super::Sheet::EqEx, 17, 30, 3, 7),
+    ];
 
     pub const SLIDER_W: i32 = 14;
     pub const SLIDER_H: i32 = 63;
