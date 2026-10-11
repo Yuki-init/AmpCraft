@@ -4,6 +4,7 @@
 pub mod config;
 pub mod dialog;
 pub mod files;
+pub mod info;
 pub mod logging;
 pub mod metadata;
 #[cfg(target_os = "linux")]

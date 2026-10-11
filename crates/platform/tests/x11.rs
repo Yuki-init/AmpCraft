@@ -430,3 +430,100 @@ fn dragging_a_window_snaps_and_docks_it() {
     assert_eq!(p.window_rect(main).unwrap(), Rect::new(300, 250, 275, 116));
     assert_eq!(p.window_rect(eq).unwrap(), Rect::new(300, 366, 275, 116));
 }
+
+fn atom(probe: &Probe, name: &str) -> u32 {
+    probe
+        .conn
+        .intern_atom(false, name.as_bytes())
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom
+}
+
+fn wm_state(probe: &Probe, id: WindowId) -> Vec<u32> {
+    let net_wm_state = atom(probe, "_NET_WM_STATE");
+    probe
+        .conn
+        .get_property(false, id.0, net_wm_state, xproto::AtomEnum::ATOM, 0, 16)
+        .unwrap()
+        .reply()
+        .unwrap()
+        .value32()
+        .map(Iterator::collect)
+        .unwrap_or_default()
+}
+
+#[test]
+fn always_on_top_is_in_the_state_the_window_manager_reads() {
+    let Some(mut p) = platform() else { return };
+    let probe = Probe::new();
+    let above = atom(&probe, "_NET_WM_STATE_ABOVE");
+    let skip = atom(&probe, "_NET_WM_STATE_SKIP_TASKBAR");
+    let main = p
+        .create_window(&spec("main-top", Rect::new(0, 0, 20, 20)))
+        .unwrap();
+    let panel = p
+        .create_window(&WindowSpec {
+            kind: WindowKind::Panel,
+            ..spec("panel-top", Rect::new(0, 20, 20, 20))
+        })
+        .unwrap();
+    for id in [main, panel] {
+        p.set_always_on_top(id, true).unwrap();
+        p.set_visible(id, true).unwrap();
+    }
+    p.pointer().unwrap();
+    assert_eq!(wm_state(&probe, main), vec![above]);
+    let panel_state = wm_state(&probe, panel);
+    assert!(panel_state.contains(&skip) && panel_state.contains(&above));
+    // Turned off while hidden: shown again without it.
+    p.set_visible(main, false).unwrap();
+    p.set_always_on_top(main, false).unwrap();
+    p.set_visible(main, true).unwrap();
+    p.pointer().unwrap();
+    assert!(wm_state(&probe, main).is_empty());
+}
+
+#[test]
+fn popups_bypass_the_window_manager_and_grab_input() {
+    let Some(mut p) = platform() else { return };
+    let id = p
+        .create_window(&WindowSpec {
+            kind: WindowKind::Popup,
+            ..spec("menu", Rect::new(100, 100, 60, 80))
+        })
+        .unwrap();
+    p.set_visible(id, true).unwrap();
+    let probe = Probe::new();
+    p.pointer().unwrap();
+    let attrs = probe
+        .conn
+        .get_window_attributes(id.0)
+        .unwrap()
+        .reply()
+        .unwrap();
+    assert!(attrs.override_redirect);
+    assert!(p.grab_input(id).unwrap());
+    p.flush().unwrap();
+    // A click far outside the popup is still reported to it, with desktop coordinates.
+    probe.move_pointer(Point::new(400, 300));
+    probe.button(true);
+    probe.button(false);
+    let e = wait_for(&mut p, |e| matches!(e, Event::ButtonDown { .. }));
+    let Event::ButtonDown {
+        window,
+        root,
+        local,
+        ..
+    } = e
+    else {
+        unreachable!()
+    };
+    assert_eq!(window, id);
+    assert_eq!(root, Point::new(400, 300));
+    assert_eq!(local, Point::new(300, 200));
+    p.release_input().unwrap();
+    p.set_visible(id, false).unwrap();
+    p.flush().unwrap();
+}

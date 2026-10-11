@@ -4,7 +4,7 @@
 //! [`X11Platform::next_event`] can wait with a timeout. Requests are sent from the caller's
 //! thread; the connection is shared and thread safe.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread::JoinHandle;
@@ -38,6 +38,8 @@ x11rb::atom_manager! {
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NORMAL,
         _NET_WM_WINDOW_TYPE_UTILITY,
+        _NET_WM_WINDOW_TYPE_POPUP_MENU,
+        _NET_WM_STATE_ABOVE,
         _NET_WM_STATE,
         _NET_WM_STATE_SKIP_TASKBAR,
         _NET_WM_STATE_SKIP_PAGER,
@@ -88,6 +90,10 @@ pub struct X11Platform {
     gc: xproto::Gcontext,
     atoms: Atoms,
     windows: BTreeMap<u32, Size>,
+    kinds: BTreeMap<u32, WindowKind>,
+    /// Windows asked to stay on top, and windows currently shown.
+    above: BTreeSet<u32>,
+    mapped: BTreeSet<u32>,
     control: xproto::Window,
     events: Receiver<std::result::Result<XEvent, String>>,
     pending: Option<Event>,
@@ -219,6 +225,9 @@ impl X11Platform {
             gc,
             atoms,
             windows: BTreeMap::new(),
+            kinds: BTreeMap::new(),
+            above: BTreeSet::new(),
+            mapped: BTreeSet::new(),
             control,
             events,
             pending: None,
@@ -385,6 +394,7 @@ impl X11Platform {
         let wtype = match kind {
             WindowKind::Main => a._NET_WM_WINDOW_TYPE_NORMAL,
             WindowKind::Panel => a._NET_WM_WINDOW_TYPE_UTILITY,
+            WindowKind::Popup => a._NET_WM_WINDOW_TYPE_POPUP_MENU,
         };
         self.conn
             .change_property32(
@@ -395,17 +405,28 @@ impl X11Platform {
                 &[wtype],
             )
             .conn()?;
+        self.write_state(id, kind)
+    }
+
+    /// Sets the initial `_NET_WM_STATE` the window manager reads when the window is shown.
+    fn write_state(&self, id: u32, kind: WindowKind) -> Result<()> {
+        let a = &self.atoms;
+        let mut state = Vec::new();
         if kind == WindowKind::Panel {
-            self.conn
-                .change_property32(
-                    PropMode::REPLACE,
-                    id,
-                    a._NET_WM_STATE,
-                    AtomEnum::ATOM,
-                    &[a._NET_WM_STATE_SKIP_TASKBAR, a._NET_WM_STATE_SKIP_PAGER],
-                )
-                .conn()?;
+            state.extend([a._NET_WM_STATE_SKIP_TASKBAR, a._NET_WM_STATE_SKIP_PAGER]);
         }
+        if self.above.contains(&id) {
+            state.push(a._NET_WM_STATE_ABOVE);
+        }
+        self.conn
+            .change_property32(
+                PropMode::REPLACE,
+                id,
+                a._NET_WM_STATE,
+                AtomEnum::ATOM,
+                &state,
+            )
+            .conn()?;
         Ok(())
     }
 
@@ -480,6 +501,7 @@ impl Platform for X11Platform {
                 &CreateWindowAux::new()
                     .background_pixel(0)
                     .border_pixel(0)
+                    .override_redirect(u32::from(spec.kind == WindowKind::Popup))
                     .event_mask(mask),
             )
             .conn()?;
@@ -544,6 +566,7 @@ impl Platform for X11Platform {
         }
 
         self.windows.insert(id, Size::new(r.w, r.h));
+        self.kinds.insert(id, spec.kind);
         Ok(WindowId(id))
     }
 
@@ -551,16 +574,93 @@ impl Platform for X11Platform {
         self.check(id)?;
         self.conn.destroy_window(id.0).conn()?;
         self.windows.remove(&id.0);
+        self.kinds.remove(&id.0);
+        self.above.remove(&id.0);
+        self.mapped.remove(&id.0);
         Ok(())
     }
 
     fn set_visible(&mut self, id: WindowId, visible: bool) -> Result<()> {
         self.check(id)?;
         if visible {
+            if self.mapped.insert(id.0) {
+                let kind = self.kinds.get(&id.0).copied().unwrap_or_default();
+                if kind != WindowKind::Popup {
+                    self.write_state(id.0, kind)?;
+                }
+            }
             self.conn.map_window(id.0).conn()?;
         } else {
+            self.mapped.remove(&id.0);
             self.conn.unmap_window(id.0).conn()?;
         }
+        Ok(())
+    }
+
+    fn set_always_on_top(&mut self, id: WindowId, on: bool) -> Result<()> {
+        self.check(id)?;
+        let changed = if on {
+            self.above.insert(id.0)
+        } else {
+            self.above.remove(&id.0)
+        };
+        if changed && self.mapped.contains(&id.0) {
+            // EWMH: ask the window manager to add (1) or remove (0) the state; source 1 is
+            // a normal application.
+            let msg = ClientMessageEvent::new(
+                32,
+                id.0,
+                self.atoms._NET_WM_STATE,
+                [u32::from(on), self.atoms._NET_WM_STATE_ABOVE, 0, 1, 0],
+            );
+            self.conn
+                .send_event(
+                    false,
+                    self.root,
+                    EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                    msg,
+                )
+                .conn()?;
+        }
+        Ok(())
+    }
+
+    fn grab_input(&mut self, id: WindowId) -> Result<bool> {
+        self.check(id)?;
+        let mask = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
+        let pointer = self
+            .conn
+            .grab_pointer(
+                false,
+                id.0,
+                mask,
+                xproto::GrabMode::ASYNC,
+                xproto::GrabMode::ASYNC,
+                x11rb::NONE,
+                x11rb::NONE,
+                x11rb::CURRENT_TIME,
+            )
+            .conn()?
+            .reply()
+            .conn()?;
+        // The keyboard is optional: arrows and Escape just will not reach the menu without it.
+        let _ = self
+            .conn
+            .grab_keyboard(
+                false,
+                id.0,
+                x11rb::CURRENT_TIME,
+                xproto::GrabMode::ASYNC,
+                xproto::GrabMode::ASYNC,
+            )
+            .conn()?
+            .reply();
+        Ok(pointer.status == xproto::GrabStatus::SUCCESS)
+    }
+
+    fn release_input(&mut self) -> Result<()> {
+        self.conn.ungrab_pointer(x11rb::CURRENT_TIME).conn()?;
+        self.conn.ungrab_keyboard(x11rb::CURRENT_TIME).conn()?;
         Ok(())
     }
 

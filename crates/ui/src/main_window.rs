@@ -241,6 +241,7 @@ pub struct MainWindow {
     equalizer_visible: bool,
     playlist_visible: bool,
     double_size: bool,
+    always_on_top: bool,
     show_remaining: bool,
     shaded: bool,
     pressed: Option<Pressed>,
@@ -289,6 +290,7 @@ impl MainWindow {
             equalizer_visible: false,
             playlist_visible: false,
             double_size: false,
+            always_on_top: false,
             show_remaining: false,
             shaded: false,
             pressed: None,
@@ -347,6 +349,15 @@ impl MainWindow {
 
     pub fn set_double_size(&mut self, on: bool) {
         self.double_size = on;
+    }
+
+    pub fn always_on_top(&self) -> bool {
+        self.always_on_top
+    }
+
+    /// Lights the A button.
+    pub fn set_always_on_top(&mut self, on: bool) {
+        self.always_on_top = on;
     }
 
     /// Forget text rendered with the previous skin's colors.
@@ -769,7 +780,12 @@ impl MainWindow {
             (Control::ClutterD, main::CLUTTER_D_ON),
             (Control::ClutterV, main::CLUTTER_V_ON),
         ] {
-            if self.pressed_on(c) || (c == Control::ClutterD && self.double_size) {
+            let lit = match c {
+                Control::ClutterD => self.double_size,
+                Control::ClutterA => self.always_on_top,
+                _ => false,
+            };
+            if lit || self.pressed_on(c) {
                 let r = c.rect();
                 draw(&mut b, on, r.x, r.y);
             }
@@ -1353,5 +1369,16 @@ mod tests {
         w.set_double_size(true);
         let b = w.render(&skin, &mut NoFallback, 0, 1);
         assert_eq!(px(&b, 10, 47), code(Sheet::Titlebar, 328, 69));
+    }
+
+    #[test]
+    fn always_on_top_lights_the_a_button() {
+        let skin = coded_skin();
+        let mut w = MainWindow::new();
+        let b = w.render(&skin, &mut NoFallback, 0, 1);
+        assert_ne!(px(&b, 10, 33), code(Sheet::Titlebar, 312, 55));
+        w.set_always_on_top(true);
+        let b = w.render(&skin, &mut NoFallback, 0, 1);
+        assert_eq!(px(&b, 10, 33), code(Sheet::Titlebar, 312, 55));
     }
 }

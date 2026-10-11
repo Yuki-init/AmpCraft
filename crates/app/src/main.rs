@@ -32,6 +32,9 @@ use amp_ui::{
 use anyhow::{Context, Result};
 use clap::Parser;
 
+mod menus;
+use menus::MenuKind;
+
 const MAIN: PanelId = PanelId(1);
 const EQ: PanelId = PanelId(2);
 const PL: PanelId = PanelId(3);
@@ -145,6 +148,10 @@ struct App {
     scale: i32,
     /// The scale came from the user (flag or toggle) rather than the screen.
     scale_pinned: bool,
+    /// The open popup menu, its windows (one per level, reused) and how many are shown.
+    menu: Option<menus::OpenMenu>,
+    popups: Vec<WindowId>,
+    popups_shown: usize,
     player: Player,
     controls: Arc<Controls>,
     eq_controls: Arc<EqControls>,
@@ -501,7 +508,17 @@ impl App {
                 }
             }
             Action::Close => self.quit = true,
-            other => log::info!("{other:?}: not implemented yet"),
+            Action::Options => {
+                let at = self.platform.pointer()?;
+                self.open_menu(MenuKind::Options, at, true)?;
+            }
+            Action::Visualization => {
+                let at = self.platform.pointer()?;
+                self.open_menu(MenuKind::Visualization, at, true)?;
+            }
+            Action::AlwaysOnTop => self.run_menu(menus::MenuCmd::AlwaysOnTop)?,
+            Action::FileInfo => self.show_file_info(),
+            Action::About => self.run_menu(menus::MenuCmd::About)?,
         }
         Ok(())
     }
@@ -576,15 +593,25 @@ impl App {
     }
 
     /// Switches to the next built-in theme (from a non-theme skin, the first one).
-    fn next_theme(&mut self) -> Result<()> {
+    /// Which built-in theme is in use, if any.
+    fn theme_index(&self) -> Option<usize> {
         use amp_skin::theme::{THEMES, find};
-        let current = self
-            .skin_path
+        self.skin_path
             .as_ref()
             .and_then(|p| p.to_str())
             .and_then(find)
-            .and_then(|t| THEMES.iter().position(|x| x.id == t.id));
-        let next = &THEMES[current.map_or(0, |i| (i + 1) % THEMES.len())];
+            .and_then(|t| THEMES.iter().position(|x| x.id == t.id))
+    }
+
+    fn next_theme(&mut self) -> Result<()> {
+        let n = amp_skin::theme::THEMES.len();
+        self.set_theme(self.theme_index().map_or(0, |i| (i + 1) % n))
+    }
+
+    fn set_theme(&mut self, index: usize) -> Result<()> {
+        let Some(next) = amp_skin::theme::THEMES.get(index) else {
+            return Ok(());
+        };
         self.skin = next.skin();
         self.skin_path = Some(PathBuf::from(next.id));
         self.main.skin_changed();
@@ -680,6 +707,7 @@ impl App {
         c.player.scale = self.scale_pinned.then_some(self.scale as u8);
         c.player.skin = self.skin_path.clone();
         c.player.show_remaining = self.main.show_remaining();
+        c.player.always_on_top = self.main.always_on_top();
         c.player.visualizer = match self.main.vis.mode {
             VisMode::Spectrum => "spectrum",
             VisMode::Oscilloscope => "oscilloscope",
@@ -1024,6 +1052,9 @@ impl App {
 
     fn handle(&mut self, event: Event) -> Result<()> {
         let now_ms = self.now_ms();
+        if self.menu_event(&event)? {
+            return Ok(());
+        }
         match event {
             Event::Expose { window } => {
                 if let Some(w) = self.wins.iter_mut().find(|w| w.id == window) {
@@ -1087,6 +1118,19 @@ impl App {
                             self.last_title_press = Some((panel, Instant::now()));
                             self.drag.press(&self.layout, panel, root);
                         }
+                    }
+                    // Right-click on the main window: the visualization menu over the
+                    // visualizer, the main menu elsewhere.
+                    MouseButton::Right if panel == MAIN => {
+                        let a = amp_ui::vis::AREA;
+                        let over_vis =
+                            (a.x..a.x + a.w).contains(&p.x) && (a.y..a.y + a.h).contains(&p.y);
+                        let kind = if over_vis && !self.main.shaded() {
+                            MenuKind::Visualization
+                        } else {
+                            MenuKind::Main
+                        };
+                        self.open_menu(kind, root, false)?;
                     }
                     MouseButton::WheelUp | MouseButton::WheelDown => {
                         let up = button == MouseButton::WheelUp;
@@ -1209,8 +1253,12 @@ impl App {
                     }
                 }
                 if !handled {
-                    for a in self.main.key(keysym) {
-                        self.act(a)?;
+                    if let Some(cmd) = menus::shortcut(keysym, mods) {
+                        self.run_menu(cmd)?;
+                    } else if !mods.ctrl && !mods.alt {
+                        for a in self.main.key(keysym) {
+                            self.act(a)?;
+                        }
                     }
                 }
             }
@@ -1576,6 +1624,7 @@ fn main() -> Result<()> {
     eq_win.shaded = was_shaded(EQ);
     pl.shaded = was_shaded(PL);
 
+    let always_on_top = config.player.always_on_top;
     let mut app = App {
         platform,
         skin,
@@ -1622,6 +1671,9 @@ fn main() -> Result<()> {
         tracker: MoveTracker::new(),
         scale,
         scale_pinned: pinned_scale.is_some(),
+        menu: None,
+        popups: Vec::new(),
+        popups_shown: 0,
         player,
         controls,
         eq_controls,
@@ -1653,6 +1705,7 @@ fn main() -> Result<()> {
     }
     app.sync_windows()?;
     app.apply_shapes()?;
+    app.set_always_on_top(always_on_top)?;
     for w in app.wins.iter().filter(|w| !w.visible) {
         app.layout.set_visible(w.panel, false);
     }

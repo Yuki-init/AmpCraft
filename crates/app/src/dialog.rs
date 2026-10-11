@@ -103,6 +103,36 @@ pub fn pick_folder(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
         .is_ok()
 }
 
+/// Shows a message box. `text` runs on the dialog's thread first, so slow work (probing a
+/// file on a sleeping disk) does not stall the UI. Returns false if no helper is installed.
+pub fn show_message(title: &str, text: impl FnOnce() -> String + Send + 'static) -> bool {
+    let helper = ["kdialog", "zenity"]
+        .into_iter()
+        .find(|h| which(h).is_some());
+    let Some(helper) = helper else {
+        log::warn!("no dialog helper found: install kdialog or zenity");
+        return false;
+    };
+    let title = title.to_owned();
+    std::thread::Builder::new()
+        .name("message-dialog".into())
+        .spawn(move || {
+            let text = text();
+            let mut cmd = Command::new(helper);
+            if helper == "kdialog" {
+                cmd.arg("--title").arg(&title).arg("--msgbox").arg(&text);
+            } else {
+                cmd.args(["--info", "--no-markup", "--no-wrap"])
+                    .arg(format!("--title={title}"))
+                    .arg(format!("--text={text}"));
+            }
+            if let Err(e) = cmd.status() {
+                log::warn!("message dialog failed: {e}");
+            }
+        })
+        .is_ok()
+}
+
 fn which(program: &str) -> Option<PathBuf> {
     std::env::var_os("PATH")?
         .to_str()?

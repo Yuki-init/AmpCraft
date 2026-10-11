@@ -31,6 +31,8 @@ pub struct PlayerConfig {
     pub skin: Option<PathBuf>,
     /// Time display shows remaining time.
     pub show_remaining: bool,
+    /// Windows stay above other programs.
+    pub always_on_top: bool,
     /// "spectrum", "oscilloscope" or "off".
     pub visualizer: String,
     /// Playlist position (0-based) of the track Play starts.
@@ -47,6 +49,7 @@ impl Default for PlayerConfig {
             scale: None,
             skin: None,
             show_remaining: false,
+            always_on_top: false,
             visualizer: "spectrum".into(),
             current_track: None,
         }

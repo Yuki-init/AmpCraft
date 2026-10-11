@@ -31,6 +31,27 @@ While playing, type `p` (pause), `n` (next), `b` (previous), `s SECS` (seek), `v
 
 Six built-in themes are generated in code from popular color schemes: `dracula`, `nord`, `gruvbox`, `solarized`, `catppuccin` and `tokyonight`. Pick one with `--skin nord` (it is remembered), or press Alt+S in the player to cycle through them. Classic `.wsz` skins still work with `--skin PATH`. `openamp-cli skin list` lists the themes and `openamp-cli skin export nord nord.wsz` writes one as a skin file other players can load. `cargo run -p amp-app --example theme_gallery -- OUT_DIR` renders all of them for a look.
 
+## Menus and keys
+
+The buttons on the left of the main window: **O** opens the options menu, **A** keeps the
+player above other windows, **I** shows the current track's file info, **D** toggles double
+size and **V** opens the visualizer menu. Right-click the main window for the main menu (or
+the visualizer for its menu).
+
+| Key | Does |
+| --- | --- |
+| Z X C V B | Previous, play, pause, stop, next |
+| Left / Right | Back / forward 5 seconds |
+| Up / Down | Volume |
+| L | Play files |
+| R / S | Repeat / shuffle |
+| Ctrl+A | Always on top |
+| Ctrl+D | Double size |
+| Ctrl+T | Time elapsed / remaining |
+| Alt+E / Alt+G / Alt+L | Playlist / equalizer / media library |
+| Alt+S | Next built-in skin |
+| Alt+3 | File info |
+
 ## Arch Linux package
 
 `scripts/build-arch-package.sh` builds a release package in an Arch container, linked against

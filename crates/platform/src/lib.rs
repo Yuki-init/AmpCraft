@@ -25,6 +25,8 @@ pub enum WindowKind {
     Main,
     /// Equalizer, playlist and other panels: kept out of the taskbar.
     Panel,
+    /// A menu: shown without the window manager, above everything, until hidden.
+    Popup,
 }
 
 /// Parameters for a new window.
@@ -168,6 +170,13 @@ pub trait Platform {
     fn screens(&self) -> Result<Vec<Rect>>;
     /// The desktop's font DPI setting (96 is unscaled), when it has one.
     fn dpi(&self) -> Option<u32>;
+    /// Keeps the window above normal windows (also applies when it is shown later).
+    fn set_always_on_top(&mut self, id: WindowId, on: bool) -> Result<()>;
+    /// Sends all pointer and keyboard input to `id` (a shown popup) until
+    /// [`Platform::release_input`]. Returns false if another program holds the input.
+    fn grab_input(&mut self, id: WindowId) -> Result<bool>;
+    /// Ends [`Platform::grab_input`].
+    fn release_input(&mut self) -> Result<()>;
     /// Next event, waiting at most `timeout` (`None` waits forever).
     fn next_event(&mut self, timeout: Option<Duration>) -> Result<Option<Event>>;
     /// Sends buffered requests to the display.
