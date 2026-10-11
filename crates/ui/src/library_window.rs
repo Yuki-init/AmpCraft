@@ -224,6 +224,11 @@ impl LibraryWindow {
         }
     }
 
+    /// Forget text rendered with the previous skin's colors.
+    pub fn skin_changed(&mut self) {
+        self.text_cache.clear();
+    }
+
     pub fn size(&self) -> (i32, i32) {
         (self.w, self.h)
     }

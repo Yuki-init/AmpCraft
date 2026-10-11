@@ -14,6 +14,7 @@ pub mod font;
 pub mod generic;
 pub mod region;
 pub mod sprites;
+pub mod theme;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -110,6 +111,14 @@ impl Skin {
             regions: Regions::default(),
             warnings: Vec::new(),
         }
+    }
+
+    /// Replaces the playlist colors and visualizer palette with ones parsed from pledit.txt
+    /// and viscolor.txt text.
+    pub fn with_text_files(mut self, pledit: &str, viscolor: &str) -> Self {
+        self.playlist_style = config::parse_pledit(pledit);
+        self.vis_colors = config::parse_viscolor(viscolor);
+        self
     }
 
     pub fn sheet(&self, sheet: Sheet) -> Option<&Bitmap> {

@@ -27,6 +27,10 @@ scripts/dev.sh cargo run --bin openamp-cli -- play FILE... [--sink device|null|f
 
 While playing, type `p` (pause), `n` (next), `b` (previous), `s SECS` (seek), `v 0-100` (volume) or `q` (quit) and press Enter. Inside the container the audio device is ALSA's null plugin, which is not paced in real time; use `--sink null` for real-time pacing. Set `OPENAMP_LOG=debug` for engine logs.
 
+## Themes
+
+Six built-in themes are generated in code from popular color schemes: `dracula`, `nord`, `gruvbox`, `solarized`, `catppuccin` and `tokyonight`. Pick one with `--skin nord` (it is remembered), or press Alt+S in the player to cycle through them. Classic `.wsz` skins still work with `--skin PATH`. `openamp-cli skin list` lists the themes and `openamp-cli skin export nord nord.wsz` writes one as a skin file other players can load. `cargo run -p amp-app --example theme_gallery -- OUT_DIR` renders all of them for a look.
+
 ## Running on the host with real audio
 
 The container cannot reach the sound server, so `scripts/host-run.sh` builds a binary in the container and runs it on the host, bundling the FFmpeg libraries the host lacks under `.cache/host-bin/`:

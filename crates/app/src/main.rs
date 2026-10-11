@@ -29,7 +29,7 @@ use amp_ui::{
     MainWindow, MoveTracker, NowPlaying, PlDown, PlayState, PlaylistAction, PlaylistEntry,
     PlaylistWindow, PointerDown, SelectMods, Selection, VisMode,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::Parser;
 
 const MAIN: PanelId = PanelId(1);
@@ -40,7 +40,8 @@ const LIB: PanelId = PanelId(4);
 #[derive(Parser)]
 #[command(version, about = "Classic skinnable audio player")]
 struct Args {
-    /// Skin file (.wsz) or folder. Defaults to the last one used, then skins/base-2.91.wsz.
+    /// Skin: a built-in theme (dracula, nord, gruvbox, solarized, catppuccin, tokyonight), a
+    /// .wsz file or a skin folder. Defaults to the last one used. Alt+S cycles the themes.
     #[arg(long)]
     skin: Option<PathBuf>,
     /// Integer UI scale. Defaults to the last one used.
@@ -495,6 +496,26 @@ impl App {
             self.platform.set_shape(id, rects.as_deref())?;
         }
         Ok(())
+    }
+
+    /// Switches to the next built-in theme (from a non-theme skin, the first one).
+    fn next_theme(&mut self) -> Result<()> {
+        use amp_skin::theme::{THEMES, find};
+        let current = self
+            .skin_path
+            .as_ref()
+            .and_then(|p| p.to_str())
+            .and_then(find)
+            .and_then(|t| THEMES.iter().position(|x| x.id == t.id));
+        let next = &THEMES[current.map_or(0, |i| (i + 1) % THEMES.len())];
+        self.skin = next.skin();
+        self.skin_path = Some(PathBuf::from(next.id));
+        self.main.skin_changed();
+        self.pl.skin_changed();
+        self.lib.skin_changed();
+        self.apply_shapes()?;
+        log::info!("theme: {}", next.name);
+        self.redraw(true)
     }
 
     /// Collapses or expands a window to its window-shade bar. Docked windows below follow.
@@ -1088,6 +1109,9 @@ impl App {
                 mods,
             } => {
                 let mut handled = false;
+                if mods.alt && (keysym == 0x73 || keysym == 0x53) {
+                    return self.next_theme();
+                }
                 if mods.alt && (keysym == 0x6c || keysym == 0x4c) {
                     let visible = self.wins.iter().any(|w| w.panel == LIB && w.visible);
                     return self.show_library(!visible);
@@ -1184,18 +1208,32 @@ impl App {
     }
 }
 
+/// Loads a skin: a built-in theme name (`dracula`, `nord`, ...), a .wsz file or a skin folder.
+/// Without one, the local base skin when present, else the first built-in theme.
 fn find_skin(arg: Option<PathBuf>) -> Result<Skin> {
     let path = match arg {
         Some(p) => p,
         None => {
             let p = PathBuf::from("skins/base-2.91.wsz");
             if !p.is_file() {
-                bail!("no skin found: pass --skin PATH (a .wsz file or skin folder)");
+                return Ok(amp_skin::theme::THEMES[0].skin());
             }
             p
         }
     };
-    let skin = Skin::load(&path).with_context(|| format!("loading skin {}", path.display()))?;
+    if !path.exists()
+        && let Some(theme) = path.to_str().and_then(amp_skin::theme::find)
+    {
+        return Ok(theme.skin());
+    }
+    let skin = Skin::load(&path).with_context(|| {
+        let themes: Vec<&str> = amp_skin::theme::THEMES.iter().map(|t| t.id).collect();
+        format!(
+            "loading skin {} (built-in themes: {})",
+            path.display(),
+            themes.join(", ")
+        )
+    })?;
     for w in skin.warnings() {
         log::warn!("skin: {w}");
     }
@@ -1453,7 +1491,14 @@ fn main() -> Result<()> {
         library,
         db_path,
         config,
-        skin_path: skin_path.map(|p| amp_app::files::absolute(&p)),
+        skin_path: skin_path.map(|p| {
+            // Theme names stay names; files and folders are stored absolute.
+            if !p.exists() && p.to_str().and_then(amp_skin::theme::find).is_some() {
+                p
+            } else {
+                amp_app::files::absolute(&p)
+            }
+        }),
         playlist_file,
         saved_config: String::new(),
         saved_playlist: String::new(),

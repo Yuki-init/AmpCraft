@@ -165,6 +165,11 @@ impl PlaylistWindow {
         self.clamp_scroll();
     }
 
+    /// Forget text rendered with the previous skin's colors.
+    pub fn skin_changed(&mut self) {
+        self.rows.clear();
+    }
+
     /// Unscaled height for the current mode ([`Self::size`] keeps the full height).
     pub fn height(&self) -> i32 {
         if self.shaded { 14 } else { self.h }

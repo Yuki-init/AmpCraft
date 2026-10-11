@@ -28,7 +28,7 @@ amp-core = { path = "../core" }
 amp-audio-out = { path = "../audio-out" }
 amp-dock = { path = "../dock" }
 amp-platform = { path = "../platform" }
-amp-skin = { path = "../skin" }
+amp-skin = { version = "0.1.0", path = "../skin" }
 amp-ui = { path = "../ui" }
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }

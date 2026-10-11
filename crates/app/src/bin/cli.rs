@@ -41,6 +41,9 @@ enum Cmd {
     /// Manage and search the media library.
     #[command(subcommand)]
     Library(LibraryCmd),
+    /// Built-in themes.
+    #[command(subcommand)]
+    Skin(SkinCmd),
     /// Decode a file to a 32-bit float WAV.
     Decode {
         file: PathBuf,
@@ -78,6 +81,14 @@ enum Cmd {
         #[arg(long, default_value_t = 0, allow_negative_numbers = true)]
         balance: i8,
     },
+}
+
+#[derive(Subcommand)]
+enum SkinCmd {
+    /// List the built-in themes.
+    List,
+    /// Write a built-in theme as a .wsz skin file.
+    Export { theme: String, output: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -123,6 +134,21 @@ fn main() -> Result<()> {
     match Cli::parse().command {
         Cmd::Probe { files } => probe(&files),
         Cmd::Library(cmd) => library(cmd),
+        Cmd::Skin(SkinCmd::List) => {
+            for t in amp_skin::theme::THEMES {
+                println!("{:<12} {}", t.id, t.name);
+            }
+            Ok(())
+        }
+        Cmd::Skin(SkinCmd::Export { theme, output }) => {
+            let Some(t) = amp_skin::theme::find(&theme) else {
+                bail!("unknown theme {theme:?}; see `openamp-cli skin list`");
+            };
+            std::fs::write(&output, t.export_wsz()?)
+                .with_context(|| output.display().to_string())?;
+            println!("wrote {} ({})", output.display(), t.name);
+            Ok(())
+        }
         Cmd::Paths => {
             let d = amp_platform::AppDirs::system();
             println!("config  {}", d.config.display());

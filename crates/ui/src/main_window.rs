@@ -349,6 +349,11 @@ impl MainWindow {
         self.double_size = on;
     }
 
+    /// Forget text rendered with the previous skin's colors.
+    pub fn skin_changed(&mut self) {
+        self.title_cache = None;
+    }
+
     /// Window-shade mode: the window collapses to a 14 px bar.
     pub fn shaded(&self) -> bool {
         self.shaded
