@@ -1,14 +1,6 @@
-//! DSP: 10-band equalizer, preamp, spectrum and oscilloscope taps.
+//! DSP: 10-band equalizer and preamp. Spectrum and oscilloscope taps come with the
+//! visualizer.
 
-/// Name of this crate, used in diagnostics.
-pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
+pub mod eq;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn crate_name_is_set() {
-        assert_eq!(CRATE_NAME, "amp-dsp");
-    }
-}
+pub use eq::{BAND_FREQUENCIES, EqControls, EqSettings, Equalizer, MAX_DB};
