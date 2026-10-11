@@ -120,6 +120,10 @@ struct App {
     saved_config: String,
     saved_playlist: String,
     last_save: Instant,
+    #[cfg(target_os = "linux")]
+    mpris: Option<amp_app::mpris::Mpris>,
+    /// Last position reported over MPRIS and when, to detect jumps.
+    mpris_position: (Option<TrackId>, Duration, Instant),
     /// Paths of the rows shown in the library window, by library id.
     lib_paths: HashMap<i64, PathBuf>,
     /// Messages from a running library scan.
@@ -568,6 +572,111 @@ impl App {
         }
     }
 
+    /// Carries out MPRIS commands and publishes the current state.
+    #[cfg(target_os = "linux")]
+    fn sync_mpris(&mut self) -> Result<()> {
+        use amp_app::mpris::{MprisCommand as C, MprisState, Status};
+        let Some(mpris) = &self.mpris else {
+            return Ok(());
+        };
+        let commands = mpris.commands();
+        for c in commands {
+            let status = self.last_status.clone();
+            match c {
+                C::Play => self.player.play()?,
+                C::Pause => {
+                    if status.state == PlaybackState::Playing {
+                        self.player.pause();
+                    }
+                }
+                C::PlayPause => {
+                    if status.state == PlaybackState::Stopped {
+                        self.player.play()?;
+                    } else {
+                        self.player.toggle_pause();
+                    }
+                }
+                C::Stop => self.player.stop()?,
+                C::Next => self.player.next()?,
+                C::Previous => self.player.prev()?,
+                C::Seek(us) => {
+                    if status.state != PlaybackState::Stopped {
+                        let target = status.position.as_micros() as i64 + us;
+                        let length = status.info.as_ref().and_then(|i| i.duration);
+                        if length.is_some_and(|l| target >= l.as_micros() as i64) {
+                            self.player.next()?;
+                        } else {
+                            self.player
+                                .seek(Duration::from_micros(target.max(0) as u64))?;
+                        }
+                    }
+                }
+                C::SetPosition(id, us) => {
+                    if status.track == Some(id) && us >= 0 {
+                        self.player.seek(Duration::from_micros(us as u64))?;
+                    }
+                }
+                C::SetVolume(v) => {
+                    self.controls.set_volume(v as f32);
+                    self.main.set_volume(v as f32);
+                }
+                C::SetShuffle(on) => {
+                    self.main.set_shuffle(on);
+                    self.act(Action::SetShuffle(on))?;
+                }
+                C::SetLoop(on) => {
+                    self.main.set_repeat(on);
+                    self.act(Action::SetRepeat(on))?;
+                }
+                C::Raise => {
+                    if let Some(id) = self.wins.iter().find(|w| w.panel == MAIN).map(|w| w.id) {
+                        self.raise_all(id)?;
+                    }
+                }
+                C::Quit => self.quit = true,
+            }
+        }
+
+        let status = &self.last_status;
+        let info = status.info.as_deref();
+        let now = Instant::now();
+        let (last_track, last_pos, last_at) = self.mpris_position;
+        let expected = if status.state == PlaybackState::Playing {
+            last_pos + now.duration_since(last_at)
+        } else {
+            last_pos
+        };
+        let drift = status.position.abs_diff(expected);
+        let seeked = status.track == last_track
+            && status.state != PlaybackState::Stopped
+            && drift > Duration::from_millis(1500);
+        self.mpris_position = (status.track, status.position, now);
+        let meta = status.track.and_then(|id| self.meta.get(&id));
+        let state = MprisState {
+            status: match status.state {
+                PlaybackState::Playing => Status::Playing,
+                PlaybackState::Paused => Status::Paused,
+                PlaybackState::Stopped => Status::Stopped,
+            },
+            track_id: status.track,
+            title: info
+                .and_then(|i| i.title.clone())
+                .or_else(|| meta.and_then(|m| m.title.clone()))
+                .or_else(|| info.map(|i| file_stem(&i.path))),
+            artist: info.and_then(|i| i.artist.clone()),
+            album: info.and_then(|i| i.album.clone()),
+            length_us: info.and_then(|i| i.duration).map(|d| d.as_micros() as i64),
+            position_us: status.position.as_micros() as i64,
+            volume: f64::from(self.controls.volume()),
+            shuffle: self.main.shuffle(),
+            repeat: self.main.repeat(),
+        };
+        if let Some(mpris) = &self.mpris {
+            mpris.update(state, seeked);
+        }
+        Ok(())
+    }
+
     fn show_library(&mut self, visible: bool) -> Result<()> {
         if visible {
             self.refresh_library();
@@ -997,6 +1106,8 @@ impl App {
                 self.folder_picked(folders)?;
             }
             self.poll_scan()?;
+            #[cfg(target_os = "linux")]
+            self.sync_mpris()?;
             if self.last_save.elapsed() > Duration::from_secs(30) {
                 self.save_state(false);
             }
@@ -1272,6 +1383,15 @@ fn main() -> Result<()> {
         saved_config: String::new(),
         saved_playlist: String::new(),
         last_save: Instant::now(),
+        #[cfg(target_os = "linux")]
+        mpris: match amp_app::mpris::Mpris::start() {
+            Ok(m) => Some(m),
+            Err(e) => {
+                log::info!("MPRIS unavailable (no session bus?): {e}");
+                None
+            }
+        },
+        mpris_position: (None, Duration::ZERO, Instant::now()),
         lib_paths: HashMap::new(),
         scan: None,
         folder_picks: mpsc::channel(),
