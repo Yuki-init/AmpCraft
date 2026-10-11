@@ -10,7 +10,17 @@ publish.workspace = true
 name = "openamp"
 path = "src/main.rs"
 
+# Headless player for testing the engine without the GUI.
+[[bin]]
+name = "openamp-cli"
+path = "src/bin/cli.rs"
+
 [lints]
 workspace = true
 
 [dependencies]
+amp-core = { path = "../core" }
+amp-audio-out = { path = "../audio-out" }
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+log = "0.4.34"

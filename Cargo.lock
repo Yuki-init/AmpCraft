@@ -37,6 +37,8 @@ dependencies = [
 name = "amp-app"
 version = "0.1.0"
 dependencies = [
+ "amp-audio-out",
+ "amp-core",
  "anyhow",
  "clap",
  "log",
