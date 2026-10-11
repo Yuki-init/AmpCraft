@@ -5,8 +5,10 @@
 
 pub mod geom;
 pub mod layout;
+pub mod reach;
 pub mod snap;
 
 pub use geom::{Point, Rect, Side, Size, attached_side};
 pub use layout::{Drag, Layout, PanelId};
+pub use reach::{DEFAULT_MIN_VISIBLE, constrain, is_reachable};
 pub use snap::{DEFAULT_SNAP_DISTANCE, snap_offset};

@@ -9,10 +9,14 @@
 //! - While dragging, the moving panels snap to other panels and to screen edges.
 //! - When a panel grows or shrinks (playlist resize, window shade), panels hanging off its
 //!   bottom or right edge move with that edge, so they stay docked.
+//! - Nothing gets stranded off screen: drags are clamped so every moving panel stays
+//!   reachable (see [`crate::reach`]), and [`Layout::ensure_reachable`] pulls stranded panels
+//!   back after monitor, size or scale changes.
 
 use std::collections::{BTreeSet, VecDeque};
 
 use crate::geom::{Point, Rect, Side, Size, attached_side};
+use crate::reach::{DEFAULT_MIN_VISIBLE, constrain, group_reachable_at};
 use crate::snap::{DEFAULT_SNAP_DISTANCE, snap_offset};
 
 /// Identifies a panel. The caller picks the numbers.
@@ -54,6 +58,7 @@ pub struct Layout {
     screens: Vec<Rect>,
     leader: Option<PanelId>,
     snap_distance: i32,
+    min_visible: Size,
 }
 
 impl Default for Layout {
@@ -69,6 +74,7 @@ impl Layout {
             screens: Vec::new(),
             leader: None,
             snap_distance: DEFAULT_SNAP_DISTANCE,
+            min_visible: DEFAULT_MIN_VISIBLE,
         }
     }
 
@@ -81,9 +87,24 @@ impl Layout {
         self.snap_distance
     }
 
-    /// Work areas of the connected monitors.
+    /// How much of each panel must stay on screen (scaled with the UI by [`Self::rescale`]).
+    pub fn set_min_visible(&mut self, size: Size) {
+        self.min_visible = Size::new(size.w.max(1), size.h.max(1));
+    }
+
+    pub fn min_visible(&self) -> Size {
+        self.min_visible
+    }
+
+    /// Work areas of the connected monitors. Panels left stranded (for example on a monitor
+    /// that went away) are moved back on screen.
     pub fn set_screens(&mut self, screens: Vec<Rect>) {
         self.screens = screens;
+        self.ensure_reachable();
+    }
+
+    pub fn screens(&self) -> &[Rect] {
+        &self.screens
     }
 
     /// The panel whose drags carry its docked cluster along (the main window).
@@ -193,7 +214,8 @@ impl Layout {
 
     /// Moves the dragged panels so the grab point follows `pointer`, snapping to other panels
     /// and screen edges. Always computed from the drag's start, so a snap releases once the
-    /// pointer moves past the snap distance. Returns the grabbed panel's new rectangle.
+    /// pointer moves past the snap distance. The move is clamped so every moving panel stays
+    /// reachable. Returns the grabbed panel's new rectangle.
     pub fn drag_to(&mut self, drag: &Drag, pointer: Point) -> Option<Rect> {
         let dx = pointer.x - drag.grab.x;
         let dy = pointer.y - drag.grab.y;
@@ -208,10 +230,63 @@ impl Layout {
             .map(|p| p.rect)
             .collect();
         let (sx, sy) = snap_offset(&moved, &targets, &self.screens, self.snap_distance);
+        let (tx, ty) = (dx + sx, dy + sy);
+        let starts: Vec<Rect> = drag.members.iter().map(|(_, r)| *r).collect();
+        let (fx, fy) = match constrain(&starts, &self.screens, self.min_visible, tx, ty) {
+            Some(d) => d,
+            // Nowhere fits. If the group started stranded, let it move freely so it can be
+            // rescued; otherwise hold the current position.
+            None if !group_reachable_at(&starts, &self.screens, self.min_visible, 0, 0) => (tx, ty),
+            None => return self.rect(drag.panel),
+        };
         for (id, start) in &drag.members {
-            self.set_rect(*id, start.translated(dx + sx, dy + sy));
+            self.set_rect(*id, start.translated(fx, fy));
         }
         self.rect(drag.panel)
+    }
+
+    /// Moves any stranded panel back on screen. The leader's cluster moves as one block, as
+    /// does every other docked cluster, so docking survives. A group that cannot fit anywhere
+    /// is moved to the top-left of the first screen. Returns true if anything moved.
+    pub fn ensure_reachable(&mut self) -> bool {
+        if self.screens.is_empty() {
+            return false;
+        }
+        let mut groups: Vec<Vec<PanelId>> = Vec::new();
+        let mut assigned = BTreeSet::new();
+        let order = self
+            .leader
+            .into_iter()
+            .chain(self.visible().map(|p| p.id).collect::<Vec<_>>());
+        for id in order {
+            if assigned.contains(&id) || !self.is_visible(id) {
+                continue;
+            }
+            let cluster = self.cluster(id);
+            assigned.extend(cluster.iter().copied());
+            groups.push(cluster.into_iter().collect());
+        }
+
+        let mut moved = false;
+        for group in groups {
+            let rects: Vec<Rect> = group.iter().filter_map(|id| self.rect(*id)).collect();
+            let Some(bounds) = rects.iter().copied().reduce(|a, r| a.union(&r)) else {
+                continue;
+            };
+            if group_reachable_at(&rects, &self.screens, self.min_visible, 0, 0) {
+                continue;
+            }
+            let home = self.screens[0];
+            let (dx, dy) = constrain(&rects, &self.screens, self.min_visible, 0, 0)
+                .unwrap_or((home.x - bounds.x, home.y - bounds.y));
+            for id in &group {
+                if let Some(r) = self.rect(*id) {
+                    self.set_rect(*id, r.translated(dx, dy));
+                }
+            }
+            moved = true;
+        }
+        moved
     }
 
     /// Resizes `id`, keeping its top-left corner. Panels docked below it (directly or in a
@@ -239,6 +314,7 @@ impl Layout {
             let my = if below.contains(&p.id) { dh } else { 0 };
             p.rect = p.rect.translated(mx, my);
         }
+        self.ensure_reachable();
     }
 
     /// Visible panels reached from `id` by repeatedly stepping to panels attached on `side`.
@@ -288,6 +364,8 @@ impl Layout {
             p.rect = Rect::new(origin.x, origin.y, size.w, size.h);
         }
         self.snap_distance = scale(self.snap_distance);
+        self.min_visible = Size::new(scale(self.min_visible.w), scale(self.min_visible.h));
+        self.ensure_reachable();
     }
 
     fn visible(&self) -> impl Iterator<Item = &Panel> + '_ {
@@ -517,6 +595,160 @@ mod tests {
         assert_eq!(l.rect(EQ), Some(Rect::new(500, 616, 275, 116)));
     }
 
+    const SCREEN: Rect = Rect::new(0, 0, 1920, 1080);
+
+    fn all_reachable(l: &Layout) -> bool {
+        l.panels()
+            .filter(|(_, _, v)| *v)
+            .all(|(_, r, _)| crate::reach::is_reachable(&r, l.screens(), l.min_visible()))
+    }
+
+    #[test]
+    fn drag_is_clamped_at_screen_edges() {
+        let mut l = Layout::new();
+        l.insert(EQ, Rect::new(100, 100, 275, 116));
+        l.set_screens(vec![SCREEN]);
+        let d = l.begin_drag(EQ, Point::new(0, 0)).unwrap();
+        l.drag_to(&d, Point::new(9000, 0));
+        assert_eq!(
+            l.rect(EQ).unwrap().x,
+            1920 - 28,
+            "28 px stays visible on the right"
+        );
+        l.drag_to(&d, Point::new(-9000, 0));
+        assert_eq!(
+            l.rect(EQ).unwrap().right(),
+            28,
+            "28 px stays visible on the left"
+        );
+        l.drag_to(&d, Point::new(0, 9000));
+        assert_eq!(
+            l.rect(EQ).unwrap().y,
+            1080 - 14,
+            "title bar stays visible at the bottom"
+        );
+    }
+
+    #[test]
+    fn title_bar_never_goes_above_the_top() {
+        let mut l = Layout::new();
+        l.insert(EQ, Rect::new(100, 100, 275, 116));
+        l.set_screens(vec![SCREEN]);
+        let d = l.begin_drag(EQ, Point::new(0, 0)).unwrap();
+        l.drag_to(&d, Point::new(0, -9000));
+        assert_eq!(l.rect(EQ).unwrap().y, 0);
+    }
+
+    #[test]
+    fn group_drag_is_limited_by_every_member() {
+        let mut l = stack();
+        l.set_screens(vec![SCREEN]);
+        let d = l.begin_drag(MAIN, Point::new(0, 0)).unwrap();
+        l.drag_to(&d, Point::new(0, 9000));
+        assert_eq!(
+            l.rect(PL).unwrap().y,
+            1080 - 14,
+            "lowest member keeps its title bar"
+        );
+        assert_eq!(l.rect(MAIN).unwrap().y, 1080 - 14 - 232);
+        assert_eq!(l.cluster(MAIN), ids(&[MAIN, EQ, PL]));
+        l.drag_to(&d, Point::new(0, -9000));
+        assert_eq!(l.rect(MAIN).unwrap().y, 0);
+    }
+
+    #[test]
+    fn unplugged_monitor_brings_cluster_back_docked() {
+        let mut l = stack();
+        l.insert(OTHER, Rect::new(2500, 300, 100, 100));
+        l.set_screens(vec![SCREEN, Rect::new(1920, 0, 1920, 1080)]);
+        // Move the whole stack onto the second monitor.
+        let d = l.begin_drag(MAIN, Point::new(0, 0)).unwrap();
+        l.drag_to(&d, Point::new(2000, 0));
+        assert_eq!(l.rect(MAIN).unwrap().x, 2100);
+        l.set_screens(vec![SCREEN]);
+        assert!(all_reachable(&l));
+        assert_eq!(l.cluster(MAIN), ids(&[MAIN, EQ, PL]), "still docked");
+        assert_eq!(
+            l.rect(MAIN).unwrap().x,
+            1920 - 28,
+            "moved the shortest distance"
+        );
+        assert_eq!(l.rect(OTHER), Some(Rect::new(1920 - 28, 300, 100, 100)));
+    }
+
+    #[test]
+    fn unshading_near_bottom_lifts_the_stack() {
+        let mut l = Layout::new();
+        l.insert(MAIN, Rect::new(100, 900, 275, 14));
+        l.insert(EQ, Rect::new(100, 914, 275, 116));
+        l.insert(PL, Rect::new(100, 1030, 275, 232));
+        l.set_leader(Some(MAIN));
+        l.set_screens(vec![SCREEN]);
+        l.resize(MAIN, Size::new(275, 116));
+        assert!(all_reachable(&l));
+        assert_eq!(l.rect(PL).unwrap().y, 1080 - 14);
+        assert_eq!(
+            l.rect(MAIN),
+            Some(Rect::new(100, 1080 - 14 - 116 - 116, 275, 116))
+        );
+        assert_eq!(l.cluster(MAIN), ids(&[MAIN, EQ, PL]));
+    }
+
+    #[test]
+    fn double_size_near_corner_stays_reachable() {
+        let mut l = stack();
+        l.set_screens(vec![SCREEN]);
+        let d = l.begin_drag(MAIN, Point::new(0, 0)).unwrap();
+        l.drag_to(&d, Point::new(1600, 500));
+        l.rescale(1, 2);
+        assert!(all_reachable(&l));
+        assert_eq!(l.min_visible(), Size::new(56, 28));
+        assert_eq!(l.cluster(MAIN), ids(&[MAIN, EQ, PL]));
+    }
+
+    #[test]
+    fn stranded_panel_can_still_be_dragged_back() {
+        let mut l = Layout::new();
+        l.set_screens(vec![SCREEN]);
+        // Inserted after the screens were set, so nothing has rescued it yet.
+        l.insert(EQ, Rect::new(5000, 5000, 275, 116));
+        let d = l.begin_drag(EQ, Point::new(0, 0)).unwrap();
+        l.drag_to(&d, Point::new(-4800, -4800));
+        assert_eq!(l.rect(EQ), Some(Rect::new(200, 200, 275, 116)));
+    }
+
+    #[test]
+    fn ensure_reachable_reports_changes() {
+        let mut l = stack();
+        l.set_screens(vec![SCREEN]);
+        assert!(!l.ensure_reachable());
+        l.insert(OTHER, Rect::new(-900, 50, 100, 100));
+        assert!(l.ensure_reachable());
+        assert_eq!(l.rect(OTHER), Some(Rect::new(28 - 100, 50, 100, 100)));
+    }
+
+    #[test]
+    fn group_too_tall_for_screen_goes_to_its_corner() {
+        let mut l = stack();
+        let d = l.begin_drag(MAIN, Point::new(0, 0)).unwrap();
+        l.drag_to(&d, Point::new(5000, 5000));
+        l.set_screens(vec![Rect::new(0, 0, 800, 200)]);
+        assert_eq!(l.rect(MAIN), Some(Rect::new(0, 0, 275, 116)));
+        assert_eq!(l.cluster(MAIN), ids(&[MAIN, EQ, PL]));
+    }
+
+    #[test]
+    fn hidden_panels_are_left_alone() {
+        let mut l = Layout::new();
+        l.insert(EQ, Rect::new(5000, 5000, 275, 116));
+        l.set_visible(EQ, false);
+        l.set_screens(vec![SCREEN]);
+        assert_eq!(l.rect(EQ), Some(Rect::new(5000, 5000, 275, 116)));
+        l.set_visible(EQ, true);
+        assert!(l.ensure_reachable());
+        assert!(all_reachable(&l));
+    }
+
     /// Small deterministic PRNG so the randomized test is reproducible.
     struct Rng(u64);
 
@@ -562,6 +794,13 @@ mod tests {
                 }
             }
             assert_eq!(r1.size(), r0.size());
+            if crate::reach::is_reachable(&r0, l.screens(), l.min_visible()) {
+                assert!(crate::reach::is_reachable(
+                    &r1,
+                    l.screens(),
+                    l.min_visible()
+                ));
+            }
         }
     }
 }
