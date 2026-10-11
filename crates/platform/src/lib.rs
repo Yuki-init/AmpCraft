@@ -8,7 +8,10 @@ use std::time::Duration;
 
 pub use amp_dock::{Point, Rect, Size};
 
+pub mod dirs;
 pub mod x11;
+
+pub use dirs::AppDirs;
 
 /// Identifies a window created by a [`Platform`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

@@ -36,6 +36,8 @@ enum Cmd {
     Probe { files: Vec<PathBuf> },
     /// List audio output devices.
     Devices,
+    /// Show where settings, data and music are looked for on this system.
+    Paths,
     /// Decode a file to a 32-bit float WAV.
     Decode {
         file: PathBuf,
@@ -96,6 +98,18 @@ fn main() -> Result<()> {
     amp_app::logging::install();
     match Cli::parse().command {
         Cmd::Probe { files } => probe(&files),
+        Cmd::Paths => {
+            let d = amp_platform::AppDirs::system();
+            println!("config  {}", d.config.display());
+            println!("        {}", d.config_file().display());
+            println!("data    {}", d.data.display());
+            println!("cache   {}", d.cache.display());
+            match &d.music {
+                Some(m) => println!("music   {}", m.display()),
+                None => println!("music   (not found)"),
+            }
+            Ok(())
+        }
         Cmd::Devices => {
             for (id, name) in amp_audio_out::list_outputs()? {
                 println!("{id:<40} {name}");

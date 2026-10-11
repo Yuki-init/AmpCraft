@@ -19,6 +19,15 @@ bin="${1:?usage: scripts/host-run.sh [--release] BIN [ARGS...]}"
 shift
 
 out="$REPO_ROOT/.cache/host-bin"
+
+# Keep app files (config, library database, caches) inside the repo unless asked otherwise,
+# so development runs never write to the home directory. HOST_RUN_REAL_DIRS=1 uses the
+# normal per-OS locations.
+if [[ "${HOST_RUN_REAL_DIRS:-0}" != "1" ]]; then
+    export OPENAMP_CONFIG_DIR="$REPO_ROOT/.cache/host-home/config"
+    export OPENAMP_DATA_DIR="$REPO_ROOT/.cache/host-home/data"
+    export OPENAMP_CACHE_DIR="$REPO_ROOT/.cache/host-home/cache"
+fi
 mkdir -p "$out"
 # Sonames the host already provides; the container copies only the rest.
 ldconfig -p | awk 'NR > 1 {print $1}' | sort -u > "$out/host-sonames.txt"

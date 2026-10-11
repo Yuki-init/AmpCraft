@@ -15,6 +15,7 @@ use amp_audio_out::{AudioOutput, Controls, OutputDevice};
 use amp_core::{PlaybackState, Player, PlayerConfig, Repeat, Status, TrackId};
 use amp_dock::{Layout, PanelId, Rect};
 use amp_dsp::{EqControls, Equalizer};
+use amp_platform::AppDirs;
 use amp_platform::x11::X11Platform;
 use amp_platform::{
     Event, Modifiers, MouseButton, Platform, Point, Size, WindowId, WindowKind, WindowSpec, keys,
@@ -107,6 +108,7 @@ struct App {
     picks: (Sender<Vec<PathBuf>>, Receiver<Vec<PathBuf>>),
     pick_mode: Option<PickMode>,
     last_dir: Option<PathBuf>,
+    dirs: AppDirs,
     last_status: Status,
     started: Instant,
     quit: bool,
@@ -288,7 +290,8 @@ impl App {
         if self.pick_mode.is_some() {
             return;
         }
-        if amp_app::dialog::pick_files(self.last_dir.clone(), self.picks.0.clone()) {
+        let start = self.last_dir.clone().or_else(|| self.dirs.music.clone());
+        if amp_app::dialog::pick_files(start, self.picks.0.clone()) {
             self.pick_mode = Some(mode);
         }
     }
@@ -632,6 +635,15 @@ fn find_skin(arg: Option<PathBuf>) -> Result<Skin> {
 fn main() -> Result<()> {
     amp_app::logging::install();
     let args = Args::parse();
+    let dirs = AppDirs::system();
+    log::info!(
+        "config {}, data {}, music {}",
+        dirs.config.display(),
+        dirs.data.display(),
+        dirs.music
+            .as_ref()
+            .map_or("(none)".into(), |m| m.display().to_string())
+    );
     let skin = find_skin(args.skin)?;
     let scale = i32::from(args.scale);
 
@@ -756,6 +768,7 @@ fn main() -> Result<()> {
         picks: mpsc::channel(),
         pick_mode: None,
         last_dir,
+        dirs,
         last_status: Status {
             state: PlaybackState::Stopped,
             track: None,

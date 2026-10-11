@@ -28,6 +28,7 @@ RUN test -n "$RUST_VERSION" \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
        | sh -s -- -y --no-modify-path --profile minimal --default-toolchain "$RUST_VERSION" \
     && rustup component add rustfmt clippy \
+    && rustup target add x86_64-pc-windows-gnu aarch64-apple-darwin \
     && cargo install --locked cargo-nextest cargo-deny \
     && rm -rf /usr/local/cargo/registry /usr/local/cargo/git \
     && chmod -R a+rwX /usr/local/rustup /usr/local/cargo
