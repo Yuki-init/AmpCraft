@@ -36,6 +36,10 @@ log = "0.4.34"
 fontdb = "0.24.0"
 amp-dsp = { version = "0.1.0", path = "../dsp" }
 swash = "0.2.10"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.8"
+amp-library = { version = "0.1.0", path = "../library" }
+thiserror = "2.0.21"
 
 [dev-dependencies]
 tempfile = "3.27.0"

@@ -51,6 +51,10 @@ struct Args {
     /// Starting volume, 0 to 100.
     #[arg(long, default_value_t = 50)]
     volume: u8,
+    /// Queue every library track matching this text (title, artist, album or path), after
+    /// any files given. Scan first with `openamp-cli library scan`.
+    #[arg(long)]
+    search: Option<String>,
     /// Files or folders to play.
     files: Vec<PathBuf>,
 }
@@ -748,7 +752,14 @@ fn main() -> Result<()> {
     };
     controls.set_volume(f32::from(args.volume.min(100)) / 100.0);
 
-    let files = amp_app::files::expand(&args.files);
+    let mut files = amp_app::files::expand(&args.files);
+    if let Some(text) = &args.search {
+        let lib = amp_library::Library::open(&dirs.data.join("library.sqlite3"))
+            .context("opening the library")?;
+        let found = lib.search(text, 10_000)?;
+        log::info!("library search {text:?}: {} tracks", found.len());
+        files.extend(found.into_iter().map(|t| t.path));
+    }
     let have_files = !files.is_empty();
     let last_dir = files.first().and_then(|f| f.parent()).map(PathBuf::from);
     player.enqueue(files);

@@ -46,6 +46,30 @@ pub struct TrackInfo {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
+    pub album_artist: Option<String>,
+    pub genre: Option<String>,
+    /// Track number within the disc ("3" or "3/12" in tags).
+    pub track: Option<u32>,
+    pub disc: Option<u32>,
+    /// First four-digit year found in the date tag.
+    pub year: Option<u32>,
+}
+
+/// Leading number of a tag like "3/12" or "03".
+fn leading_number(s: &str) -> Option<u32> {
+    let digits: String = s.trim().chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok().filter(|n| *n > 0)
+}
+
+/// First run of four digits in a date tag ("2007", "2007-05-01", "May 2007").
+fn year_of(s: &str) -> Option<u32> {
+    let bytes = s.as_bytes();
+    bytes.windows(4).find_map(|w| {
+        w.iter()
+            .all(u8::is_ascii_digit)
+            .then(|| std::str::from_utf8(w).ok()?.parse().ok())
+            .flatten()
+    })
 }
 
 /// Decodes one file into interleaved stereo `f32` at a fixed output rate.
@@ -148,6 +172,14 @@ impl Decoder {
             title: tag("title"),
             artist: tag("artist"),
             album: tag("album"),
+            album_artist: tag("album_artist").or_else(|| tag("album artist")),
+            genre: tag("genre"),
+            track: tag("track").as_deref().and_then(leading_number),
+            disc: tag("disc").as_deref().and_then(leading_number),
+            year: tag("date")
+                .or_else(|| tag("year"))
+                .as_deref()
+                .and_then(year_of),
         };
 
         Ok(Self {
@@ -447,6 +479,17 @@ mod tests {
             Decoder::open(p, 44_100),
             Err(CoreError::NonUtf8Path(_))
         ));
+    }
+
+    #[test]
+    fn tag_number_parsing() {
+        assert_eq!(leading_number("3/12"), Some(3));
+        assert_eq!(leading_number(" 07 "), Some(7));
+        assert_eq!(leading_number("0"), None);
+        assert_eq!(leading_number("x"), None);
+        assert_eq!(year_of("2007-05-01"), Some(2007));
+        assert_eq!(year_of("May 1999"), Some(1999));
+        assert_eq!(year_of("99"), None);
     }
 
     #[test]

@@ -38,6 +38,9 @@ enum Cmd {
     Devices,
     /// Show where settings, data and music are looked for on this system.
     Paths,
+    /// Manage and search the media library.
+    #[command(subcommand)]
+    Library(LibraryCmd),
     /// Decode a file to a 32-bit float WAV.
     Decode {
         file: PathBuf,
@@ -77,6 +80,27 @@ enum Cmd {
     },
 }
 
+#[derive(Subcommand)]
+enum LibraryCmd {
+    /// List the folders the library scans.
+    Folders,
+    /// Add a folder to scan (it is only read, never written).
+    Add { folder: PathBuf },
+    /// Stop scanning a folder (its tracks are removed at the next scan only if it still exists
+    /// elsewhere; otherwise run `scan` after removing).
+    Remove { folder: PathBuf },
+    /// Scan the folders and update the database.
+    Scan,
+    /// Find tracks by title, artist, album or path.
+    Search {
+        text: String,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Show track, artist and album counts.
+    Stats,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum Sink {
     /// The default audio device.
@@ -98,6 +122,7 @@ fn main() -> Result<()> {
     amp_app::logging::install();
     match Cli::parse().command {
         Cmd::Probe { files } => probe(&files),
+        Cmd::Library(cmd) => library(cmd),
         Cmd::Paths => {
             let d = amp_platform::AppDirs::system();
             println!("config  {}", d.config.display());
@@ -134,6 +159,103 @@ fn main() -> Result<()> {
             balance,
         } => play(files, sink, device, seek, shuffle, repeat, volume, balance),
     }
+}
+
+fn library(cmd: LibraryCmd) -> Result<()> {
+    use amp_app::config::Config;
+    let dirs = amp_platform::AppDirs::system();
+    let config_path = dirs.config_file();
+    let mut config = Config::load(&config_path)?;
+    let db_path = dirs.data.join("library.sqlite3");
+    match cmd {
+        LibraryCmd::Folders => {
+            for root in config.library.roots(dirs.music.as_deref()) {
+                let note =
+                    if Some(&root) == dirs.music.as_ref() && config.library.include_music_folder {
+                        " (Music folder)"
+                    } else {
+                        ""
+                    };
+                let state = if root.is_dir() {
+                    ""
+                } else {
+                    "  [not available]"
+                };
+                println!("{}{note}{state}", root.display());
+            }
+        }
+        LibraryCmd::Add { folder } => {
+            let folder = std::fs::canonicalize(&folder)
+                .with_context(|| format!("{} is not an existing folder", folder.display()))?;
+            if !folder.is_dir() {
+                bail!("{} is not a folder", folder.display());
+            }
+            if config.library.add(folder.clone()) {
+                config.save(&config_path)?;
+                println!(
+                    "added {}; run `openamp-cli library scan` to index it",
+                    folder.display()
+                );
+            } else {
+                println!("{} is already in the library", folder.display());
+            }
+        }
+        LibraryCmd::Remove { folder } => {
+            let canonical = std::fs::canonicalize(&folder).unwrap_or(folder.clone());
+            if config.library.remove(&canonical) || config.library.remove(&folder) {
+                config.save(&config_path)?;
+                println!("removed {}", folder.display());
+            } else {
+                bail!("{} is not one of the added folders", folder.display());
+            }
+        }
+        LibraryCmd::Scan => {
+            let roots = config.library.roots(dirs.music.as_deref());
+            let mut lib = amp_library::Library::open(&db_path)?;
+            let tty = std::io::stderr().is_terminal();
+            let started = Instant::now();
+            let report = lib.scan(&roots, &amp_library::FfmpegTags, &mut |done, total| {
+                if tty && (done % 25 == 0 || done == total) {
+                    eprint!("\rscanning {done}/{total}");
+                }
+            })?;
+            if tty {
+                eprintln!();
+            }
+            println!(
+                "{} folders scanned, {} not available; {} files: {} added, {} updated, {} unchanged, {} removed, {} without readable tags ({:.1}s)",
+                report.roots_scanned,
+                report.roots_missing,
+                report.files_seen,
+                report.added,
+                report.updated,
+                report.unchanged,
+                report.removed,
+                report.unreadable,
+                started.elapsed().as_secs_f64()
+            );
+        }
+        LibraryCmd::Search { text, limit } => {
+            let lib = amp_library::Library::open(&db_path)?;
+            for t in lib.search(&text, limit)? {
+                let duration = t.tags.duration.map(clock).unwrap_or_default();
+                let album = t.tags.album.as_deref().unwrap_or("");
+                println!("{:<50} {:>6}  {album}", t.display_title(), duration);
+            }
+        }
+        LibraryCmd::Stats => {
+            let lib = amp_library::Library::open(&db_path)?;
+            let s = lib.stats()?;
+            println!(
+                "{} tracks, {} artists, {} albums, {} total",
+                s.tracks,
+                s.artists,
+                s.albums,
+                clock(s.total_duration)
+            );
+        }
+    }
+    Ok(())
 }
 
 fn probe(files: &[PathBuf]) -> Result<()> {

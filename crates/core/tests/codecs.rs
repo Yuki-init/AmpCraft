@@ -92,6 +92,14 @@ fn info_reports_codec_duration_and_tags() {
             "artist=Ärtist",
             "-metadata",
             "album=Album 日本",
+            "-metadata",
+            "track=3/12",
+            "-metadata",
+            "date=2007-05-01",
+            "-metadata",
+            "genre=Trance",
+            "-metadata",
+            "album_artist=Various",
         ],
     ) else {
         return;
@@ -104,6 +112,10 @@ fn info_reports_codec_duration_and_tags() {
     assert_eq!(info.title.as_deref(), Some("Tëst Ťitle"));
     assert_eq!(info.artist.as_deref(), Some("Ärtist"));
     assert_eq!(info.album.as_deref(), Some("Album 日本"));
+    assert_eq!(info.track, Some(3));
+    assert_eq!(info.year, Some(2007));
+    assert_eq!(info.genre.as_deref(), Some("Trance"));
+    assert_eq!(info.album_artist.as_deref(), Some("Various"));
     let d = info.duration.unwrap().as_secs_f64();
     assert!((d - 1.0).abs() < 0.01, "duration {d}");
 }

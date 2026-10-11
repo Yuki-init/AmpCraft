@@ -2,11 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// Extensions treated as audio when walking folders (compared case-insensitively).
-pub const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "ogg", "oga", "opus", "m4a", "mp4", "aac", "wma", "wav", "aif", "aiff", "ape",
-    "wv", "mpc", "mp2", "ac3", "alac", "caf", "webm", "mka",
-];
+pub use amp_library::AUDIO_EXTENSIONS;
 
 /// Most files collected from folders, so a mistaken argument cannot stall startup.
 const MAX_FILES: usize = 20_000;

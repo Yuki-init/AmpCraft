@@ -629,6 +629,11 @@ mod tests {
             title: None,
             artist: None,
             album: None,
+            album_artist: None,
+            genre: None,
+            track: None,
+            disc: None,
+            year: None,
         });
         Segment {
             start,
