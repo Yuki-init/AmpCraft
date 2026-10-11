@@ -1,0 +1,12 @@
+[package]
+name = "amp-dock"
+description = "Docking math: panel graph, edge snapping and group drag. Pure, no I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

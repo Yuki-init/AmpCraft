@@ -1,0 +1,16 @@
+[package]
+name = "amp-app"
+description = "Player binary: configuration and wiring."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "openamp"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]

@@ -1,0 +1,12 @@
+[package]
+name = "amp-library"
+description = "Media library: database, tag reading, .m3u and .pls playlists."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

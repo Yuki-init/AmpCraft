@@ -1,0 +1,12 @@
+[package]
+name = "amp-skin"
+description = "Classic skin loader: .wsz archives, sprite maps, bitmap font, region masks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

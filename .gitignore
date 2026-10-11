@@ -1,0 +1,8 @@
+/target/
+/.cache/
+# Third-party skins without a recorded permissive license stay local only.
+/skins/
+*.wsz
+# Editor and OS noise
+*.swp
+.DS_Store
