@@ -69,6 +69,8 @@ enum Command {
     Seek(Duration),
     Next,
     Prev,
+    /// Make `id` the track Play starts, without playing.
+    Select(TrackId),
     Shutdown,
 }
 
@@ -274,6 +276,12 @@ impl Player {
         self.send(Command::Seek(pos))
     }
 
+    /// Makes `id` the track a later [`Player::play`] starts, without starting playback (used
+    /// when restoring a saved playlist).
+    pub fn select(&self, id: TrackId) -> Result<()> {
+        self.send(Command::Select(id))
+    }
+
     pub fn next(&self) -> Result<()> {
         self.send(Command::Next)
     }
@@ -436,6 +444,11 @@ impl Worker {
                 }
             }
             Command::Stop => self.stop(),
+            Command::Select(id) => {
+                if self.current.is_none() {
+                    self.last_track = Some(id);
+                }
+            }
             Command::Seek(pos) => self.seek(pos),
             Command::Next => {
                 let Some(id) = self.heard_track() else {

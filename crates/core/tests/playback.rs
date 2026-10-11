@@ -376,3 +376,29 @@ fn empty_queue_play_stays_stopped() {
     let mut buf = vec![0.0; 64];
     assert_eq!(source.fill(&mut buf), 0);
 }
+
+#[test]
+fn select_sets_where_play_starts_without_playing() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths: Vec<_> = (0..3)
+        .map(|i| {
+            write_fixture(
+                dir.path(),
+                &format!("{i}.wav"),
+                WavFormat::Float32,
+                RATE,
+                2,
+                &stereo_chirp(RATE, 4_410, 0),
+            )
+        })
+        .collect();
+    let (player, _source) = Player::new(PlayerConfig::default()).unwrap();
+    let ids = player.enqueue(paths);
+    player.select(ids[2]).unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    assert_eq!(player.status().state, PlaybackState::Stopped);
+    player.play().unwrap();
+    wait_until(Duration::from_secs(5), || {
+        player.status().track == Some(ids[2])
+    });
+}

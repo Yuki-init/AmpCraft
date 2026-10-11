@@ -13,11 +13,22 @@ pub fn is_audio(path: &Path) -> bool {
         .is_some_and(|e| AUDIO_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
+/// Makes `p` absolute against the current folder (without resolving symlinks), so saved
+/// playlists and settings work from anywhere.
+pub fn absolute(p: &Path) -> PathBuf {
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir().map_or_else(|_| p.to_path_buf(), |cwd| cwd.join(p))
+    }
+}
+
 /// Files are kept as given (in order); folders are walked recursively in name order and
-/// contribute their audio files. Hidden entries are skipped.
+/// contribute their audio files. Hidden entries are skipped. Results are absolute.
 pub fn expand(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for p in paths {
+        let p = &absolute(p);
         if p.is_dir() {
             walk(p, &mut out);
         } else {
@@ -74,6 +85,7 @@ mod tests {
         }
         std::fs::write(d.join("single.ogg"), b"").unwrap();
         let got = expand(&[d.join("single.ogg"), d.join("album")]);
+        assert!(got.iter().all(|p| p.is_absolute()));
         let names: Vec<_> = got
             .iter()
             .map(|p| p.strip_prefix(d).unwrap().to_string_lossy().into_owned())

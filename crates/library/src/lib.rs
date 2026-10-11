@@ -5,6 +5,8 @@
 //! files that disappeared are removed. A folder that is missing entirely (an unmounted drive)
 //! is skipped and its tracks are kept.
 
+pub mod playlist;
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
@@ -646,9 +648,9 @@ mod tests {
     fn groupings_and_filters() {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
-        write(d, "Alpha/01 a.flac", b"1");
-        write(d, "Alpha/02 b.flac", b"2");
-        write(d, "beta/01 c.flac", b"3");
+        write(d, "Alpha/01 alfa.flac", b"1");
+        write(d, "Alpha/02 bravo.flac", b"2");
+        write(d, "beta/01 charlie.flac", b"3");
         let mut lib = Library::open_in_memory().unwrap();
         scan(&mut lib, &[d.to_path_buf()], &FakeTags::new());
         assert_eq!(
@@ -662,7 +664,7 @@ mod tests {
         );
         let f = Filter {
             album: Some("Alpha".into()),
-            text: "b".into(),
+            text: "bravo".into(),
             ..Filter::default()
         };
         let got: Vec<_> = lib
@@ -671,7 +673,7 @@ mod tests {
             .into_iter()
             .map(|t| t.tags.title.unwrap())
             .collect();
-        assert_eq!(got, vec!["02 b"]);
+        assert_eq!(got, vec!["02 bravo"]);
         let by_artist = Filter {
             artist: Some("Artist".into()),
             ..Filter::default()

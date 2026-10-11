@@ -320,6 +320,10 @@ impl MainWindow {
         self.double_size = on;
     }
 
+    pub fn set_show_remaining(&mut self, on: bool) {
+        self.show_remaining = on;
+    }
+
     pub fn show_remaining(&self) -> bool {
         self.show_remaining
     }

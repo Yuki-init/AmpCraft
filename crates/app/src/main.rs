@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use amp_app::config::Config;
+use amp_app::config::{Config, WindowState};
 use amp_app::metadata::{Prober, TrackMeta};
 use amp_app::null_sink::NullSink;
 use amp_app::system_font::SystemFont;
@@ -27,7 +27,7 @@ use amp_ui::main_window::{HEIGHT, WIDTH};
 use amp_ui::{
     Action, DockDrag, EqAction, EqDown, EqWindow, LibAction, LibDown, LibraryRow, LibraryWindow,
     MainWindow, MoveTracker, NowPlaying, PlDown, PlayState, PlaylistAction, PlaylistEntry,
-    PlaylistWindow, PointerDown, SelectMods, Selection,
+    PlaylistWindow, PointerDown, SelectMods, Selection, VisMode,
 };
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -40,21 +40,21 @@ const LIB: PanelId = PanelId(4);
 #[derive(Parser)]
 #[command(version, about = "Classic skinnable audio player")]
 struct Args {
-    /// Skin file (.wsz) or folder. Defaults to skins/base-2.91.wsz when present.
+    /// Skin file (.wsz) or folder. Defaults to the last one used, then skins/base-2.91.wsz.
     #[arg(long)]
     skin: Option<PathBuf>,
-    /// Integer UI scale.
-    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=3))]
-    scale: u8,
+    /// Integer UI scale. Defaults to the last one used.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=3))]
+    scale: Option<u8>,
     /// Audio output device (see `openamp-cli devices`).
     #[arg(long)]
     device: Option<String>,
     /// `null` discards audio at real-time pace (headless runs, no sound hardware).
     #[arg(long, value_enum, default_value_t = AudioArg::Device)]
     audio: AudioArg,
-    /// Starting volume, 0 to 100.
-    #[arg(long, default_value_t = 50)]
-    volume: u8,
+    /// Starting volume, 0 to 100. Defaults to the last one used.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
+    volume: Option<u8>,
     /// Open the media library window at start (toggle with Alt+L).
     #[arg(long)]
     library: bool,
@@ -114,6 +114,12 @@ struct App {
     library: Option<Library>,
     db_path: PathBuf,
     config: Config,
+    skin_path: Option<PathBuf>,
+    playlist_file: PathBuf,
+    /// What was last written, to skip unchanged saves.
+    saved_config: String,
+    saved_playlist: String,
+    last_save: Instant,
     /// Paths of the rows shown in the library window, by library id.
     lib_paths: HashMap<i64, PathBuf>,
     /// Messages from a running library scan.
@@ -487,6 +493,79 @@ impl App {
         }
         self.platform.raise(focused)?;
         Ok(())
+    }
+
+    /// Writes settings, window layout and the playlist, skipping files that did not change.
+    /// `quitting` also records where Play should resume.
+    fn save_state(&mut self, quitting: bool) {
+        self.last_save = Instant::now();
+        let window = |panel: PanelId, size: Option<(i32, i32)>| {
+            let w = self.wins.iter().find(|w| w.panel == panel)?;
+            let r = self.layout.rect(panel)?;
+            Some(WindowState {
+                x: r.x,
+                y: r.y,
+                visible: w.visible,
+                width: size.map(|s| s.0),
+                height: size.map(|s| s.1),
+            })
+        };
+        let mut c = self.config.clone();
+        c.windows.main = window(MAIN, None);
+        c.windows.equalizer = window(EQ, None);
+        c.windows.playlist = window(PL, Some(self.pl.size()));
+        c.windows.library = window(LIB, Some(self.lib.size()));
+        c.player.volume = self.controls.volume();
+        c.player.balance = self.controls.balance();
+        c.player.shuffle = self.main.shuffle();
+        c.player.repeat = self.main.repeat();
+        c.player.scale = self.scale as u8;
+        c.player.skin = self.skin_path.clone();
+        c.player.show_remaining = self.main.show_remaining();
+        c.player.visualizer = match self.main.vis.mode {
+            VisMode::Spectrum => "spectrum",
+            VisMode::Oscilloscope => "oscilloscope",
+            VisMode::Off => "off",
+        }
+        .into();
+        let eq = self.eq_controls.settings();
+        c.equalizer.enabled = eq.enabled;
+        c.equalizer.preamp_db = eq.preamp_db;
+        c.equalizer.bands_db = eq.bands_db;
+        c.equalizer.auto = self.eq.auto;
+        let queued: Vec<(TrackId, PathBuf)> = self
+            .player
+            .with_queue(|q| q.entries().iter().map(|e| (e.id, e.path.clone())).collect());
+        if quitting || self.current.is_some() {
+            c.player.current_track = self
+                .current
+                .and_then(|id| queued.iter().position(|(q, _)| *q == id));
+        }
+        self.config = c;
+
+        if let Ok(text) = toml::to_string_pretty(&self.config)
+            && text != self.saved_config
+        {
+            match self.config.save(&self.dirs.config_file()) {
+                Ok(()) => self.saved_config = text,
+                Err(e) => log::warn!("{e}"),
+            }
+        }
+        let items: Vec<amp_library::playlist::PlaylistItem> = queued
+            .iter()
+            .map(|(id, path)| amp_library::playlist::PlaylistItem {
+                path: path.clone(),
+                title: self.meta.get(id).and_then(|m| m.title.clone()),
+                duration: self.meta.get(id).and_then(|m| m.duration),
+            })
+            .collect();
+        let text = amp_library::playlist::write_m3u(&items);
+        if text != self.saved_playlist {
+            match amp_library::playlist::save_m3u(&self.playlist_file, &items) {
+                Ok(()) => self.saved_playlist = text,
+                Err(e) => log::warn!("cannot save playlist: {e}"),
+            }
+        }
     }
 
     fn show_library(&mut self, visible: bool) -> Result<()> {
@@ -918,6 +997,9 @@ impl App {
                 self.folder_picked(folders)?;
             }
             self.poll_scan()?;
+            if self.last_save.elapsed() > Duration::from_secs(30) {
+                self.save_state(false);
+            }
             self.update();
             self.redraw(false)?;
             self.platform.flush()?;
@@ -956,8 +1038,20 @@ fn main() -> Result<()> {
             .as_ref()
             .map_or("(none)".into(), |m| m.display().to_string())
     );
-    let skin = find_skin(args.skin)?;
-    let scale = i32::from(args.scale);
+    let config = Config::load(&dirs.config_file()).unwrap_or_else(|e| {
+        log::warn!("{e}; using default settings");
+        Config::default()
+    });
+    let skin_path = args.skin.clone().or_else(|| config.player.skin.clone());
+    let (skin, skin_path) = match find_skin(skin_path.clone()) {
+        Ok(s) => (s, skin_path),
+        Err(e) if args.skin.is_none() && skin_path.is_some() => {
+            log::warn!("saved skin unavailable ({e}); trying the default");
+            (find_skin(None)?, None)
+        }
+        Err(e) => return Err(e),
+    };
+    let scale = i32::from(args.scale.unwrap_or(config.player.scale).clamp(1, 3));
 
     let eq_controls = EqControls::new();
     let (mut tap, analyzer) = amp_dsp::analyzer();
@@ -993,11 +1087,15 @@ fn main() -> Result<()> {
             (Output::Null(sink), controls)
         }
     };
-    controls.set_volume(f32::from(args.volume.min(100)) / 100.0);
-
-    let config = Config::load(&dirs.config_file()).unwrap_or_else(|e| {
-        log::warn!("{e}; using default settings");
-        Config::default()
+    controls.set_volume(match args.volume {
+        Some(v) => f32::from(v) / 100.0,
+        None => config.player.volume,
+    });
+    controls.set_balance(config.player.balance);
+    eq_controls.set(&amp_dsp::EqSettings {
+        enabled: config.equalizer.enabled,
+        preamp_db: config.equalizer.preamp_db,
+        bands_db: config.equalizer.bands_db,
     });
     let db_path = dirs.data.join("library.sqlite3");
     let library = match Library::open(&db_path) {
@@ -1014,8 +1112,30 @@ fn main() -> Result<()> {
         files.extend(found.into_iter().map(|t| t.path));
     }
     let have_files = !files.is_empty();
+    let playlist_file = dirs.data.join("playlist.m3u8");
+    let restored = if have_files {
+        Vec::new()
+    } else {
+        amp_library::playlist::read_playlist(&playlist_file).unwrap_or_default()
+    };
     let last_dir = files.first().and_then(|f| f.parent()).map(PathBuf::from);
     player.enqueue(files);
+    let mut restored_current = None;
+    if !restored.is_empty() {
+        let ids = player.enqueue(restored);
+        if let Some(id) = config.player.current_track.and_then(|i| ids.get(i)) {
+            player.select(*id)?;
+            restored_current = Some(*id);
+        }
+    }
+    player.with_queue(|q| {
+        q.set_repeat(if config.player.repeat {
+            Repeat::All
+        } else {
+            Repeat::Off
+        });
+        q.set_shuffle(config.player.shuffle);
+    });
 
     let mut platform = X11Platform::connect().context("connecting to the display")?;
     let screens = platform.screens()?;
@@ -1023,9 +1143,31 @@ fn main() -> Result<()> {
         .first()
         .map_or(Point::new(100, 100), |s| Point::new(s.x + 100, s.y + 100));
 
+    let saved = |panel: PanelId| match panel {
+        MAIN => config.windows.main,
+        EQ => config.windows.equalizer,
+        PL => config.windows.playlist,
+        _ => config.windows.library,
+    };
     let mut pl = PlaylistWindow::new();
+    if let Some(WindowState {
+        width: Some(w),
+        height: Some(h),
+        ..
+    }) = saved(PL)
+    {
+        pl.set_size(w, h);
+    }
     let (pl_w, pl_h) = pl.size();
-    let lib_win = LibraryWindow::new();
+    let mut lib_win = LibraryWindow::new();
+    if let Some(WindowState {
+        width: Some(w),
+        height: Some(h),
+        ..
+    }) = saved(LIB)
+    {
+        lib_win.set_size(w, h);
+    }
     let (lib_w, lib_h) = lib_win.size();
     let rects = [
         (
@@ -1058,12 +1200,18 @@ fn main() -> Result<()> {
     layout.set_min_visible(amp_dock::Size::new(28 * scale, 14 * scale));
     let mut wins = Vec::new();
     for (panel, title, kind, r) in rects {
-        let rect = Rect::new(
-            origin.x + r.x * scale,
-            origin.y + r.y * scale,
-            r.w * scale,
-            r.h * scale,
-        );
+        // Saved positions are desktop coordinates; otherwise the classic stack.
+        let state = saved(panel);
+        let rect = match state {
+            Some(s) => Rect::new(s.x, s.y, r.w * scale, r.h * scale),
+            None => Rect::new(
+                origin.x + r.x * scale,
+                origin.y + r.y * scale,
+                r.w * scale,
+                r.h * scale,
+            ),
+        };
+        let visible = state.map_or(panel != LIB, |s| s.visible || panel == MAIN);
         // Panels belong to the main window, so the window manager raises them with it.
         let owner = wins.first().map(|w: &Win| w.id);
         let id = platform.create_window(&WindowSpec {
@@ -1077,7 +1225,7 @@ fn main() -> Result<()> {
             id,
             panel,
             applied: rect,
-            visible: panel != LIB,
+            visible,
             frame: None,
         });
     }
@@ -1085,11 +1233,27 @@ fn main() -> Result<()> {
     layout.set_screens(screens);
     pl.focused = false;
 
+    let shown = |panel: PanelId| wins.iter().any(|w| w.panel == panel && w.visible);
     let mut main = MainWindow::new();
     main.set_volume(controls.volume());
+    main.set_balance(controls.balance());
     main.set_double_size(scale > 1);
-    main.set_equalizer_visible(true);
-    main.set_playlist_visible(true);
+    main.set_equalizer_visible(shown(EQ));
+    main.set_playlist_visible(shown(PL));
+    main.set_shuffle(config.player.shuffle);
+    main.set_repeat(config.player.repeat);
+    main.set_show_remaining(config.player.show_remaining);
+    main.vis.mode = match config.player.visualizer.as_str() {
+        "oscilloscope" => VisMode::Oscilloscope,
+        "off" => VisMode::Off,
+        _ => VisMode::Spectrum,
+    };
+    let mut eq_win = EqWindow::new();
+    eq_win.enabled = config.equalizer.enabled;
+    eq_win.auto = config.equalizer.auto;
+    eq_win.preamp_db = config.equalizer.preamp_db;
+    eq_win.bands_db = config.equalizer.bands_db;
+    let lib_shown = shown(LIB);
 
     let mut app = App {
         platform,
@@ -1097,12 +1261,17 @@ fn main() -> Result<()> {
         font: SystemFont::load(),
         wins,
         main,
-        eq: EqWindow::new(),
+        eq: eq_win,
         pl,
         lib: lib_win,
         library,
         db_path,
         config,
+        skin_path: skin_path.map(|p| amp_app::files::absolute(&p)),
+        playlist_file,
+        saved_config: String::new(),
+        saved_playlist: String::new(),
+        last_save: Instant::now(),
         lib_paths: HashMap::new(),
         scan: None,
         folder_picks: mpsc::channel(),
@@ -1114,7 +1283,7 @@ fn main() -> Result<()> {
         controls,
         eq_controls,
         _output: output,
-        current: None,
+        current: restored_current,
         meta: HashMap::new(),
         requested: HashSet::new(),
         prober: Prober::new(),
@@ -1141,16 +1310,22 @@ fn main() -> Result<()> {
     }
     app.sync_windows()?;
     app.apply_shapes()?;
-    app.layout.set_visible(LIB, false);
+    for w in app.wins.iter().filter(|w| !w.visible) {
+        app.layout.set_visible(w.panel, false);
+    }
+    app.layout.ensure_reachable();
+    app.sync_windows()?;
     for w in app.wins.iter().filter(|w| w.visible) {
         app.platform.set_visible(w.id, true)?;
     }
-    if args.library {
+    if args.library || lib_shown {
         app.show_library(true)?;
     }
     app.platform.flush()?;
     if have_files {
         app.player.play()?;
     }
-    app.run()
+    let result = app.run();
+    app.save_state(true);
+    result
 }

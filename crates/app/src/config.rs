@@ -8,7 +8,78 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub player: PlayerConfig,
+    pub equalizer: EqConfig,
+    pub windows: WindowsConfig,
     pub library: LibraryConfig,
+}
+
+/// Player state restored at the next start.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlayerConfig {
+    /// 0.0 to 1.0.
+    pub volume: f32,
+    /// -1.0 (left) to 1.0 (right).
+    pub balance: f32,
+    pub shuffle: bool,
+    pub repeat: bool,
+    /// UI scale, 1 to 3.
+    pub scale: u8,
+    /// Skin file or folder.
+    pub skin: Option<PathBuf>,
+    /// Time display shows remaining time.
+    pub show_remaining: bool,
+    /// "spectrum", "oscilloscope" or "off".
+    pub visualizer: String,
+    /// Playlist position (0-based) of the track Play starts.
+    pub current_track: Option<usize>,
+}
+
+impl Default for PlayerConfig {
+    fn default() -> Self {
+        Self {
+            volume: 0.5,
+            balance: 0.0,
+            shuffle: false,
+            repeat: false,
+            scale: 1,
+            skin: None,
+            show_remaining: false,
+            visualizer: "spectrum".into(),
+            current_track: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EqConfig {
+    pub enabled: bool,
+    pub auto: bool,
+    pub preamp_db: f32,
+    pub bands_db: [f32; 10],
+}
+
+/// Where a window was and whether it was shown. Sizes are unscaled (resizable windows only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowState {
+    pub x: i32,
+    pub y: i32,
+    pub visible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<i32>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowsConfig {
+    pub main: Option<WindowState>,
+    pub equalizer: Option<WindowState>,
+    pub playlist: Option<WindowState>,
+    pub library: Option<WindowState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -147,6 +218,39 @@ mod tests {
             Config::load(&path),
             Err(ConfigError::Parse { .. })
         ));
+    }
+
+    #[test]
+    fn full_state_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut c = Config::default();
+        c.player.volume = 0.8;
+        c.player.skin = Some("/skins/a.wsz".into());
+        c.player.current_track = Some(3);
+        c.equalizer.enabled = true;
+        c.equalizer.bands_db[2] = 6.0;
+        c.windows.playlist = Some(WindowState {
+            x: 100,
+            y: 332,
+            visible: true,
+            width: Some(325),
+            height: Some(290),
+        });
+        c.windows.main = Some(WindowState {
+            x: 100,
+            y: 100,
+            visible: true,
+            width: None,
+            height: None,
+        });
+        c.save(&path).unwrap();
+        assert_eq!(Config::load(&path).unwrap(), c);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("width = ") || text.contains("[windows.playlist]"),
+            "{text}"
+        );
     }
 
     #[test]
