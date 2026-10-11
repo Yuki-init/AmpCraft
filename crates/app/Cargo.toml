@@ -33,9 +33,9 @@ amp-ui = { path = "../ui" }
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 log = "0.4.34"
-fontdue = "0.9.4"
 fontdb = "0.24.0"
 amp-dsp = { version = "0.1.0", path = "../dsp" }
+swash = "0.2.10"
 
 [dev-dependencies]
 tempfile = "3.27.0"

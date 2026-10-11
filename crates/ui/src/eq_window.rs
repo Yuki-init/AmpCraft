@@ -177,7 +177,8 @@ impl EqWindow {
         self.pressed == Some((c, true))
     }
 
-    pub fn render(&self, skin: &Skin) -> Bitmap {
+    /// Draws the window at `scale` (pixel doubling; the equalizer has no text).
+    pub fn render(&self, skin: &Skin, scale: u32) -> Bitmap {
         let mut b = Bitmap::new(WIDTH as u32, HEIGHT as u32, 0xFF00_0000);
         let draw = |b: &mut Bitmap, s: Sprite, x: i32, y: i32| {
             skin.draw(b, s, x, y);
@@ -274,7 +275,7 @@ impl EqWindow {
                 r.y + ((1.0 - l) * THUMB_TRAVEL as f32).round() as i32,
             );
         }
-        b
+        crate::render::scale_nearest(&b, scale)
     }
 }
 
@@ -343,7 +344,7 @@ mod tests {
         let mut w = EqWindow::new();
         w.enabled = true;
         w.bands_db[0] = 12.0;
-        let b = w.render(&skin);
+        let b = w.render(&skin, 1);
         assert_eq!(b.get(14, 18), Some(code(Sheet::EqMain, 69, 119)), "ON lit");
         let r = EqControl::Band(0).rect();
         assert_eq!(

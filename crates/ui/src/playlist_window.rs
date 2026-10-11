@@ -104,7 +104,7 @@ pub struct PlaylistWindow {
     /// Pointer position and window size when a resize began.
     resize: Option<(Point, i32, i32)>,
     last_click: Option<(EntryId, u64)>,
-    rows: HashMap<(String, u32), TextStrip>,
+    rows: HashMap<(String, u32, u32), TextStrip>,
 }
 
 impl Default for PlaylistWindow {
@@ -488,15 +488,16 @@ impl PlaylistWindow {
         fallback: &mut dyn TextRenderer,
         text: &str,
         color: u32,
+        height: u32,
     ) -> TextStrip {
-        let key = (text.to_owned(), color);
+        let key = (text.to_owned(), color, height);
         if let Some(s) = self.rows.get(&key) {
             return s.clone();
         }
         if self.rows.len() >= ROW_CACHE_LIMIT {
             self.rows.clear();
         }
-        let strip = TextStrip::colored(skin, fallback, text, ROW_TEXT_H, color);
+        let strip = TextStrip::colored(skin, fallback, text, height, color);
         self.rows.insert(key, strip.clone());
         strip
     }
@@ -505,7 +506,15 @@ impl PlaylistWindow {
         self.pressed == Some((c, true))
     }
 
-    pub fn render(&mut self, skin: &Skin, fallback: &mut dyn TextRenderer, now_ms: u64) -> Bitmap {
+    /// Draws the window at `scale`, with system-font rows rendered at the final size.
+    pub fn render(
+        &mut self,
+        skin: &Skin,
+        fallback: &mut dyn TextRenderer,
+        now_ms: u64,
+        scale: u32,
+    ) -> Bitmap {
+        let scale = scale.max(1);
         let (w, h) = (self.w, self.h);
         let style = skin.playlist_style().clone();
         let mut b = Bitmap::new(w as u32, h as u32, style.normal_bg);
@@ -612,6 +621,8 @@ impl PlaylistWindow {
             .take(rows)
             .map(|(i, e)| (i, e.clone()))
             .collect();
+        // Rows rendered with a system font are drawn after scaling, at the final size.
+        let mut late = Vec::new();
         for (row, (i, entry)) in visible.into_iter().enumerate() {
             let y = list.y + row as i32 * ROW_H;
             if self.selected.contains(&entry.id) {
@@ -622,28 +633,27 @@ impl PlaylistWindow {
             } else {
                 style.normal
             };
-            let duration = self.row_strip(skin, fallback, &duration_text(entry.duration), color);
+            let height = ROW_TEXT_H * scale;
+            let duration = self.row_strip(
+                skin,
+                fallback,
+                &duration_text(entry.duration),
+                color,
+                height,
+            );
             let title = self.row_strip(
                 skin,
                 fallback,
                 &format!("{}. {}", i + 1, entry.title),
                 color,
+                height,
             );
-            let text_y = y + (ROW_H - title.height()) / 2;
-            let dur_x = list.x + list.w - 3 - duration.width();
-            let title_clip = Rect::new(list.x + 2, y, (dur_x - 4 - list.x).max(0), ROW_H);
-            title.draw(&mut b, title_clip, text_y, 0, false, 0);
-            let dur_clip = Rect::new(dur_x, y, duration.width(), ROW_H);
-            duration.draw(
-                &mut b,
-                dur_clip,
-                y + (ROW_H - duration.height()) / 2,
-                0,
-                false,
-                0,
-            );
+            if title.is_bitmap() {
+                Self::draw_row(&mut b, &title, &duration, list, y, 1);
+            } else {
+                late.push((title, duration, y));
+            }
         }
-
         // Running time (selected/total) and the mini time display, in the skin font.
         let total: Duration = self.entries.iter().filter_map(|e| e.duration).sum();
         let selected: Duration = self
@@ -663,7 +673,50 @@ impl PlaylistWindow {
             let t = duration_text(Some(self.now.position));
             skin.draw_text(&mut b, &format!("{t:>5}"), w - 150 + 66, h - BOTTOM + 23);
         }
-        b
+        let mut out = crate::render::scale_nearest(&b, scale);
+        let s = scale as i32;
+        let list = Rect::new(list.x * s, list.y * s, list.w * s, list.h * s);
+        for (title, duration, y) in late {
+            Self::draw_row(&mut out, &title, &duration, list, y * s, s);
+        }
+        out
+    }
+
+    /// Draws a row's title (clipped) and right-aligned duration. `list` and `y` are in the
+    /// same pixel space as `dst`; `unit` is that space's scale.
+    fn draw_row(
+        dst: &mut Bitmap,
+        title: &TextStrip,
+        duration: &TextStrip,
+        list: Rect,
+        y: i32,
+        unit: i32,
+    ) {
+        let row_h = ROW_H * unit;
+        let dur_x = list.x + list.w - 3 * unit - duration.width();
+        let title_clip = Rect::new(
+            list.x + 2 * unit,
+            y,
+            (dur_x - 4 * unit - list.x).max(0),
+            row_h,
+        );
+        title.draw(
+            dst,
+            title_clip,
+            y + (row_h - title.height()) / 2,
+            0,
+            false,
+            0,
+        );
+        let dur_clip = Rect::new(dur_x, y, duration.width(), row_h);
+        duration.draw(
+            dst,
+            dur_clip,
+            y + (row_h - duration.height()) / 2,
+            0,
+            false,
+            0,
+        );
     }
 }
 
@@ -881,7 +934,7 @@ mod tests {
         w.set_size(350, 261);
         w.focused = true;
         w.pointer_down(row_point(&w, 1), NONE, 0);
-        let b = w.render(&skin, &mut NoFallback, 0);
+        let b = w.render(&skin, &mut NoFallback, 0, 1);
         assert_eq!((b.width(), b.height()), (350, 261));
         assert_eq!(
             b.get(0, 0),

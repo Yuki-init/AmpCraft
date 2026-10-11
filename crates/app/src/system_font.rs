@@ -1,14 +1,24 @@
 //! System-font fallback for titles the skin's bitmap font cannot show.
 //!
-//! Fonts are found with fontdb (fontconfig directories) and rasterized with fontdue. Each
-//! character uses the first preferred font that has a glyph for it, so Japanese titles pick
-//! up a CJK font while Latin text stays in a plain sans-serif.
+//! Fonts are found with fontdb (fontconfig directories) and rendered with swash using
+//! hinting, so strokes land on whole pixels at the small sizes the skin layout needs; a mild
+//! contrast curve keeps thin CJK strokes from washing out. Each character uses the first
+//! preferred font that has a glyph for it, so Japanese titles pick up a CJK font while Latin
+//! text stays in a well-hinted sans-serif.
 
 use amp_ui::{Mask, TextRenderer};
 use fontdb::{Database, Family, Query};
+use swash::scale::{Render, ScaleContext, Source, StrikeWith};
+use swash::zeno::Format;
+use swash::{CacheKey, FontRef};
 
-/// Families tried in order; the database's generic sans-serif comes last.
+/// Families tried in order; the database's generic sans-serif comes last. Latin first:
+/// DejaVu and Noto Sans hint well at small sizes, and CJK fonts fill in what they lack.
 const PREFERRED: &[&str] = &[
+    "DejaVu Sans",
+    "Noto Sans",
+    "Liberation Sans",
+    "Arial",
     "Noto Sans CJK JP",
     "Noto Sans JP",
     "Source Han Sans JP",
@@ -17,14 +27,30 @@ const PREFERRED: &[&str] = &[
     "VL Gothic",
     "TakaoGothic",
     "Droid Sans Fallback",
-    "Noto Sans",
-    "DejaVu Sans",
-    "Liberation Sans",
-    "Arial",
 ];
 
+/// Exponent applied to coverage; below 1 darkens partial pixels for crisper small text.
+const CONTRAST: f32 = 0.75;
+
+struct LoadedFont {
+    data: Vec<u8>,
+    offset: u32,
+    key: CacheKey,
+}
+
+impl LoadedFont {
+    fn as_ref(&self) -> FontRef<'_> {
+        FontRef {
+            data: &self.data,
+            offset: self.offset,
+            key: self.key,
+        }
+    }
+}
+
 pub struct SystemFont {
-    fonts: Vec<fontdue::Font>,
+    fonts: Vec<LoadedFont>,
+    context: ScaleContext,
 }
 
 impl std::fmt::Debug for SystemFont {
@@ -56,77 +82,96 @@ impl SystemFont {
                 continue;
             }
             seen.push(id);
-            let font = db.with_face_data(id, |data, index| {
-                fontdue::Font::from_bytes(
-                    data,
-                    fontdue::FontSettings {
-                        collection_index: index,
-                        ..fontdue::FontSettings::default()
-                    },
-                )
-                .ok()
+            let loaded = db.with_face_data(id, |data, index| {
+                let font = FontRef::from_index(data, index as usize)?;
+                Some(LoadedFont {
+                    data: data.to_vec(),
+                    offset: font.offset,
+                    key: font.key,
+                })
             });
-            if let Some(Some(f)) = font {
+            if let Some(Some(f)) = loaded {
                 fonts.push(f);
             }
         }
         log::info!("system fonts for titles: {}", fonts.len());
-        Self { fonts }
+        Self {
+            fonts,
+            context: ScaleContext::new(),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
         self.fonts.is_empty()
     }
-
-    fn font_for(&self, c: char) -> Option<&fontdue::Font> {
-        self.fonts
-            .iter()
-            .find(|f| f.lookup_glyph_index(c) != 0)
-            .or_else(|| self.fonts.first())
-    }
 }
 
 impl TextRenderer for SystemFont {
     fn render(&mut self, text: &str, height: u32) -> Option<Mask> {
-        let primary = self.fonts.first()?;
+        let primary = self.fonts.first()?.as_ref();
         let h = height.max(1) as f32;
-        // Size so ascent plus descent fills the height.
-        let px = primary
-            .horizontal_line_metrics(h)
-            .map_or(h, |m| h * h / (m.ascent - m.descent).max(1.0));
-        let ascent = primary
-            .horizontal_line_metrics(px)
-            .map_or(px * 0.8, |m| m.ascent)
-            .round() as i32;
+        // Size so ascent plus descent fills the height, then put the baseline on a pixel.
+        let unit = primary.metrics(&[]).scale(1.0);
+        let px = h / (unit.ascent + unit.descent).max(0.1);
+        let ascent = (unit.ascent * px).round() as i32;
 
-        let glyphs: Vec<(fontdue::Metrics, Vec<u8>)> = text
-            .chars()
-            .map(|c| match self.font_for(c) {
-                Some(f) => f.rasterize(c, px),
-                None => (fontdue::Metrics::default(), Vec::new()),
-            })
-            .collect();
-        let width: i32 = glyphs
-            .iter()
-            .map(|(m, _)| m.advance_width.round() as i32)
-            .sum::<i32>()
-            .max(1);
-        let mut alpha = vec![0u8; width as usize * height as usize];
+        struct Placed {
+            left: i32,
+            top: i32,
+            width: u32,
+            height: u32,
+            data: Vec<u8>,
+            pen: i32,
+        }
+        let mut placed = Vec::new();
         let mut pen = 0i32;
-        for (m, bitmap) in &glyphs {
-            let top = ascent - (m.height as i32 + m.ymin);
-            for gy in 0..m.height as i32 {
-                for gx in 0..m.width as i32 {
-                    let (x, y) = (pen + m.xmin + gx, top + gy);
+        for c in text.chars() {
+            let font = self
+                .fonts
+                .iter()
+                .map(LoadedFont::as_ref)
+                .find(|f| f.charmap().map(c) != 0)
+                .unwrap_or(primary);
+            let glyph = font.charmap().map(c);
+            let advance = font
+                .glyph_metrics(&[])
+                .scale(px)
+                .advance_width(glyph)
+                .round() as i32;
+            let mut scaler = self.context.builder(font).size(px).hint(true).build();
+            let image = Render::new(&[Source::Bitmap(StrikeWith::BestFit), Source::Outline])
+                .format(Format::Alpha)
+                .render(&mut scaler, glyph);
+            if let Some(img) = image {
+                placed.push(Placed {
+                    left: img.placement.left,
+                    top: img.placement.top,
+                    width: img.placement.width,
+                    height: img.placement.height,
+                    data: img.data,
+                    pen,
+                });
+            }
+            pen += advance;
+        }
+
+        let width = pen.max(1);
+        let mut alpha = vec![0u8; width as usize * height as usize];
+        let curve: Vec<u8> = (0..=255u32)
+            .map(|a| ((a as f32 / 255.0).powf(CONTRAST) * 255.0).round() as u8)
+            .collect();
+        for g in placed {
+            for gy in 0..g.height as i32 {
+                for gx in 0..g.width as i32 {
+                    let (x, y) = (g.pen + g.left + gx, ascent - g.top + gy);
                     if x < 0 || y < 0 || x >= width || y >= height as i32 {
                         continue;
                     }
-                    let a = bitmap[(gy * m.width as i32 + gx) as usize];
+                    let a = curve[usize::from(g.data[(gy * g.width as i32 + gx) as usize])];
                     let slot = &mut alpha[(y * width + x) as usize];
                     *slot = (*slot).max(a);
                 }
             }
-            pen += m.advance_width.round() as i32;
         }
         Some(Mask {
             width: width as u32,
@@ -141,22 +186,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn renders_japanese_when_fonts_exist() {
+    fn renders_japanese_and_latin_when_fonts_exist() {
         let mut f = SystemFont::load();
         if f.is_empty() {
             eprintln!("no system fonts, skipping");
             return;
         }
-        let mask = f.render("ハレ晴レユカイ", 11).unwrap();
-        assert_eq!(mask.height, 11);
-        assert!(mask.width > 40, "width {}", mask.width);
-        let inked = mask.alpha.iter().filter(|a| **a > 128).count();
-        assert!(inked > 50, "only {inked} inked pixels");
+        for (text, min_width) in [("ハレ晴レユカイ", 40), ("God Knows... 1:15", 50)] {
+            let mask = f.render(text, 11).unwrap();
+            assert_eq!(mask.height, 11);
+            assert!(mask.width > min_width, "{text}: width {}", mask.width);
+            let inked = mask.alpha.iter().filter(|a| **a > 128).count();
+            assert!(inked > 40, "{text}: only {inked} inked pixels");
+        }
+    }
+
+    #[test]
+    fn doubling_the_height_roughly_doubles_the_width() {
+        let mut f = SystemFont::load();
+        if f.is_empty() {
+            return;
+        }
+        let one = f.render("Scale test", 10).unwrap().width as f32;
+        let two = f.render("Scale test", 20).unwrap().width as f32;
+        assert!((two / one - 2.0).abs() < 0.25, "{one} -> {two}");
     }
 
     #[test]
     fn empty_font_list_renders_nothing() {
-        let mut f = SystemFont { fonts: Vec::new() };
+        let mut f = SystemFont {
+            fonts: Vec::new(),
+            context: ScaleContext::new(),
+        };
         assert!(f.render("abc", 11).is_none());
     }
 }

@@ -74,6 +74,9 @@ pub struct TextStrip {
     pixels: Bitmap,
     /// Pixels where the text was drawn (the rest is transparent).
     used: Vec<bool>,
+    /// Drawn with the skin's bitmap font (scaled with the window) rather than a system font
+    /// (rendered at the final size).
+    bitmap: bool,
 }
 
 impl TextStrip {
@@ -95,7 +98,11 @@ impl TextStrip {
             for (p, a) in pixels.pixels_mut().iter_mut().zip(&mask.alpha) {
                 *p = (*p & 0x00FF_FFFF) | u32::from(*a) << 24;
             }
-            return Self { pixels, used };
+            return Self {
+                pixels,
+                used,
+                bitmap: false,
+            };
         }
         let width = font::text_width(text).max(0) as u32;
         let mut pixels = Bitmap::new(width, font::CHAR_H as u32, 0);
@@ -105,7 +112,11 @@ impl TextStrip {
         for p in pixels.pixels_mut() {
             *p |= 0xFF00_0000;
         }
-        Self { pixels, used }
+        Self {
+            pixels,
+            used,
+            bitmap: true,
+        }
     }
 
     /// Renders `text` with the fallback renderer in `color` (playlist rows use the system
@@ -123,7 +134,11 @@ impl TextStrip {
                 *p = (*p & 0x00FF_FFFF) | u32::from(*a) << 24;
             }
             let used = mask.alpha.iter().map(|a| *a > 0).collect();
-            return Self { pixels, used };
+            return Self {
+                pixels,
+                used,
+                bitmap: false,
+            };
         }
         let width = font::text_width(text).max(0) as u32;
         let mut pixels = Bitmap::new(width, font::CHAR_H as u32, 0);
@@ -134,7 +149,16 @@ impl TextStrip {
         for p in pixels.pixels_mut() {
             *p |= 0xFF00_0000;
         }
-        Self { pixels, used }
+        Self {
+            pixels,
+            used,
+            bitmap: true,
+        }
+    }
+
+    /// Whether this strip uses the skin's bitmap font.
+    pub fn is_bitmap(&self) -> bool {
+        self.bitmap
     }
 
     pub fn width(&self) -> i32 {

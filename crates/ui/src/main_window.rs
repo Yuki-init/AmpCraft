@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use amp_dock::Point;
 use amp_skin::sprites::{self, Sprite, main, numbers};
-use amp_skin::{Bitmap, Rect, Sheet, Skin, font};
+use amp_skin::{Bitmap, Rect, Sheet, Skin};
 
 use crate::text::{TextRenderer, TextStrip};
 
@@ -215,7 +215,7 @@ pub struct MainWindow {
     /// Slider being dragged and its live value.
     slider: Option<(Control, f32)>,
     /// Last title text, its rendered strip, and whether it scrolls.
-    title_cache: Option<(String, TextStrip, bool)>,
+    title_cache: Option<(String, u32, TextStrip, bool)>,
 }
 
 impl Default for MainWindow {
@@ -538,23 +538,22 @@ impl MainWindow {
         fallback: &mut dyn TextRenderer,
         text: &str,
         static_text: bool,
+        scale: u32,
     ) -> (TextStrip, bool) {
-        if let Some((cached, strip, scroll)) = &self.title_cache
+        if let Some((cached, cached_scale, strip, scroll)) = &self.title_cache
             && cached == text
+            && *cached_scale == scale
         {
             return (strip.clone(), *scroll);
         }
-        let mut strip = TextStrip::new(skin, fallback, text, FALLBACK_TEXT_HEIGHT);
-        let scroll = !static_text && strip.width() > MARQUEE.w;
+        let height = FALLBACK_TEXT_HEIGHT * scale;
+        let mut strip = TextStrip::new(skin, fallback, text, height);
+        let unit = if strip.is_bitmap() { 1 } else { scale as i32 };
+        let scroll = !static_text && strip.width() > MARQUEE.w * unit;
         if scroll {
-            strip = TextStrip::new(
-                skin,
-                fallback,
-                &format!("{text}  ***  "),
-                FALLBACK_TEXT_HEIGHT,
-            );
+            strip = TextStrip::new(skin, fallback, &format!("{text}  ***  "), height);
         }
-        self.title_cache = Some((text.to_owned(), strip.clone(), scroll));
+        self.title_cache = Some((text.to_owned(), scale, strip.clone(), scroll));
         (strip, scroll)
     }
 
@@ -562,8 +561,17 @@ impl MainWindow {
         self.pressed.is_some_and(|p| p.control == c && p.inside)
     }
 
-    /// Draws the window at 1x. `now_ms` drives scrolling and blinking.
-    pub fn render(&mut self, skin: &Skin, fallback: &mut dyn TextRenderer, now_ms: u64) -> Bitmap {
+    /// Draws the window at `scale` (1, 2 or 3). Skin sprites and the bitmap font are scaled
+    /// by pixel doubling; system-font text is rendered at the final size so it stays sharp.
+    /// `now_ms` drives scrolling and blinking.
+    pub fn render(
+        &mut self,
+        skin: &Skin,
+        fallback: &mut dyn TextRenderer,
+        now_ms: u64,
+        scale: u32,
+    ) -> Bitmap {
+        let scale = scale.max(1);
         let mut b = Bitmap::new(WIDTH as u32, HEIGHT as u32, 0xFF00_0000);
         let draw = |b: &mut Bitmap, s: Sprite, x: i32, y: i32| {
             skin.draw(b, s, x, y);
@@ -648,22 +656,24 @@ impl MainWindow {
             }
         }
 
-        // Title display.
+        // Title display. Bitmap-font titles are drawn now and scaled with the window;
+        // system-font titles are drawn at the final size after scaling.
         let text = self.marquee_text();
+        let mut late_title = None;
         if !text.is_empty() {
             let static_text = self.slider.is_some();
-            let (strip, scroll) = self.title_strip(skin, fallback, &text, static_text);
-            let y = if strip.height() == font::CHAR_H {
-                MARQUEE_TEXT_Y
-            } else {
-                MARQUEE.y + (MARQUEE.h - strip.height()) / 2
-            };
-            let offset = if scroll {
-                ((now_ms / SCROLL_STEP_MS) as i32).wrapping_mul(SCROLL_STEP_PX)
+            let (strip, scroll) = self.title_strip(skin, fallback, &text, static_text, scale);
+            let steps = if scroll {
+                (now_ms / SCROLL_STEP_MS) as i32
             } else {
                 0
             };
-            strip.draw(&mut b, MARQUEE, y, offset, scroll, 0);
+            if strip.is_bitmap() {
+                let offset = steps.wrapping_mul(SCROLL_STEP_PX);
+                strip.draw(&mut b, MARQUEE, MARQUEE_TEXT_Y, offset, scroll, 0);
+            } else {
+                late_title = Some((strip, scroll, steps));
+            }
         }
 
         // Stream info.
@@ -782,7 +792,15 @@ impl MainWindow {
             (true, true) => main::REPEAT_ON_PRESSED,
         };
         draw(&mut b, repeat, 210, 89);
-        b
+        let mut out = crate::render::scale_nearest(&b, scale);
+        if let Some((strip, scroll, steps)) = late_title {
+            let s = scale as i32;
+            let clip = Rect::new(MARQUEE.x * s, MARQUEE.y * s, MARQUEE.w * s, MARQUEE.h * s);
+            let y = clip.y + (clip.h - strip.height()) / 2;
+            let offset = steps.wrapping_mul(SCROLL_STEP_PX * s);
+            strip.draw(&mut out, clip, y, offset, scroll, 0);
+        }
+        out
     }
 }
 
@@ -984,10 +1002,10 @@ mod tests {
     fn pressed_button_draws_pressed_sprite() {
         let skin = coded_skin();
         let mut w = MainWindow::new();
-        let normal = w.render(&skin, &mut NoFallback, 0);
+        let normal = w.render(&skin, &mut NoFallback, 0, 1);
         assert_eq!(px(&normal, 39, 88), code(Sheet::Cbuttons, 23, 0));
         w.pointer_down(center(Control::Play));
-        let pressed = w.render(&skin, &mut NoFallback, 0);
+        let pressed = w.render(&skin, &mut NoFallback, 0, 1);
         assert_eq!(px(&pressed, 39, 88), code(Sheet::Cbuttons, 23, 18));
     }
 
@@ -996,7 +1014,7 @@ mod tests {
         let skin = coded_skin();
         let mut w = MainWindow::new();
         w.now = playing(83, 300);
-        let b = w.render(&skin, &mut NoFallback, 0);
+        let b = w.render(&skin, &mut NoFallback, 0, 1);
         // 01:23 from NUMS_EX.
         for (digit, x) in [(0, 48), (1, 60), (2, 78), (3, 90)] {
             assert_eq!(
@@ -1006,7 +1024,7 @@ mod tests {
             );
         }
         click(&mut w, Control::Time);
-        let b = w.render(&skin, &mut NoFallback, 0);
+        let b = w.render(&skin, &mut NoFallback, 0, 1);
         // 300 - 83 = 217 s = 03:37, with a minus sign.
         for (digit, x) in [(0, 48), (3, 60), (3, 78), (7, 90)] {
             assert_eq!(
@@ -1024,12 +1042,12 @@ mod tests {
         let mut w = MainWindow::new();
         w.now = playing(83, 300);
         w.now.state = PlayState::Paused;
-        let shown = w.render(&skin, &mut NoFallback, 100);
-        let hidden = w.render(&skin, &mut NoFallback, 600);
+        let shown = w.render(&skin, &mut NoFallback, 100, 1);
+        let hidden = w.render(&skin, &mut NoFallback, 600, 1);
         assert_eq!(px(&shown, 48, 26), code(Sheet::NumsEx, 0, 0));
         assert_eq!(px(&hidden, 48, 26), code(Sheet::Main, 48, 26));
         w.now.state = PlayState::Stopped;
-        let stopped = w.render(&skin, &mut NoFallback, 100);
+        let stopped = w.render(&skin, &mut NoFallback, 100, 1);
         assert_eq!(px(&stopped, 48, 26), code(Sheet::Main, 48, 26));
         assert_eq!(
             px(&stopped, 26, 28),
@@ -1043,13 +1061,13 @@ mod tests {
         let skin = coded_skin();
         let mut w = MainWindow::new();
         w.now = playing(1, 10);
-        let b = w.render(&skin, &mut NoFallback, 0);
+        let b = w.render(&skin, &mut NoFallback, 0, 1);
         assert_eq!(px(&b, 212, 41), code(Sheet::Monoster, 29, 12), "mono off");
         assert_eq!(px(&b, 239, 41), code(Sheet::Monoster, 0, 0), "stereo on");
         // "320" in the bitmap font: '3' is row 1, column 3.
         assert_eq!(px(&b, 111, 43), code(Sheet::Text, 15, 6));
         w.now.channels = 1;
-        let b = w.render(&skin, &mut NoFallback, 0);
+        let b = w.render(&skin, &mut NoFallback, 0, 1);
         assert_eq!(px(&b, 212, 41), code(Sheet::Monoster, 29, 0), "mono on");
     }
 
@@ -1059,7 +1077,7 @@ mod tests {
         let mut w = MainWindow::new();
         w.set_volume(1.0);
         w.now = playing(50, 100);
-        let b = w.render(&skin, &mut NoFallback, 0);
+        let b = w.render(&skin, &mut NoFallback, 0, 1);
         assert_eq!(
             px(&b, 107 + 51, 58),
             code(Sheet::Volume, 15, 422),
@@ -1085,15 +1103,52 @@ mod tests {
         let mut w = MainWindow::new();
         w.now = playing(0, 10);
         w.now.title = "A VERY LONG TITLE THAT DOES NOT FIT INTO THE DISPLAY AT ALL".into();
-        let a = w.render(&skin, &mut NoFallback, 0);
-        let b = w.render(&skin, &mut NoFallback, 1000);
+        let a = w.render(&skin, &mut NoFallback, 0, 1);
+        let b = w.render(&skin, &mut NoFallback, 1000, 1);
         let row = |bm: &Bitmap| (111..265).map(|x| px(bm, x, 27)).collect::<Vec<_>>();
         assert_ne!(row(&a), row(&b));
         // Short titles stay put.
         w.now.title = "SHORT".into();
-        let c = w.render(&skin, &mut NoFallback, 0);
-        let d = w.render(&skin, &mut NoFallback, 1000);
+        let c = w.render(&skin, &mut NoFallback, 0, 1);
+        let d = w.render(&skin, &mut NoFallback, 1000, 1);
         assert_eq!(row(&c), row(&d));
+    }
+
+    /// Records the heights it was asked for and draws solid blocks.
+    struct Recorder(Vec<u32>);
+
+    impl TextRenderer for Recorder {
+        fn render(&mut self, text: &str, height: u32) -> Option<crate::text::Mask> {
+            self.0.push(height);
+            let width = text.chars().count() as u32 * height / 2;
+            Some(crate::text::Mask {
+                width,
+                height,
+                alpha: vec![255; (width * height) as usize],
+            })
+        }
+    }
+
+    #[test]
+    fn system_font_titles_render_at_the_final_size() {
+        let skin = coded_skin();
+        let mut w = MainWindow::new();
+        w.now = playing(0, 10);
+        w.now.title = "日本".into();
+        let mut rec = Recorder(Vec::new());
+        let b = w.render(&skin, &mut rec, 0, 2);
+        assert_eq!((b.width(), b.height()), (550, 232));
+        assert_eq!(rec.0, vec![22], "asked for 2x height, once");
+        let (_, fg) = crate::text::text_colors(&skin);
+        // Text starts at the scaled title box, at full resolution (not pixel-doubled).
+        assert_eq!(b.get(222, 50), Some(fg));
+        // Cached: a second frame does not re-render.
+        w.render(&skin, &mut rec, 0, 2);
+        assert_eq!(rec.0.len(), 1);
+        // Bitmap-font titles keep the classic doubled look.
+        w.now.title = "ASCII".into();
+        let b = w.render(&skin, &mut rec, 0, 2);
+        assert_eq!(b.get(2 * 120, 2 * 27), b.get(2 * 120 + 1, 2 * 27 + 1));
     }
 
     #[test]
@@ -1101,7 +1156,7 @@ mod tests {
         let skin = coded_skin();
         let mut w = MainWindow::new();
         w.set_double_size(true);
-        let b = w.render(&skin, &mut NoFallback, 0);
+        let b = w.render(&skin, &mut NoFallback, 0, 1);
         assert_eq!(px(&b, 10, 47), code(Sheet::Titlebar, 328, 69));
     }
 }

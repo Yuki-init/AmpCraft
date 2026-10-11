@@ -24,7 +24,6 @@ use amp_ui::main_window::{HEIGHT, WIDTH};
 use amp_ui::{
     Action, DockDrag, EqAction, EqDown, EqWindow, MainWindow, MoveTracker, NowPlaying, PlDown,
     PlayState, PlaylistAction, PlaylistEntry, PlaylistWindow, PointerDown, SelectMods,
-    scale_nearest,
 };
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -269,12 +268,12 @@ impl App {
             if !self.wins[i].visible {
                 continue;
             }
+            let scale = self.scale as u32;
             let frame = match self.wins[i].panel {
-                MAIN => self.main.render(&self.skin, &mut self.font, now_ms),
-                EQ => self.eq.render(&self.skin),
-                _ => self.pl.render(&self.skin, &mut self.font, now_ms),
+                MAIN => self.main.render(&self.skin, &mut self.font, now_ms, scale),
+                EQ => self.eq.render(&self.skin, scale),
+                _ => self.pl.render(&self.skin, &mut self.font, now_ms, scale),
             };
-            let frame = scale_nearest(&frame, self.scale as u32);
             let w = &mut self.wins[i];
             if force || w.frame.as_ref() != Some(&frame) {
                 let size = Size::new(frame.width() as i32, frame.height() as i32);
