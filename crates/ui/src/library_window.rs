@@ -11,8 +11,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 
 use amp_dock::Point;
-use amp_skin::generic::{self, GenExColors, GenLetters, button};
-use amp_skin::{Bitmap, Rect, Sheet, Skin, Sprite};
+use amp_skin::generic::{self, GenExColors, button};
+use amp_skin::{Bitmap, Rect, Skin};
 
 use crate::text::{TextRenderer, TextStrip};
 
@@ -1001,119 +1001,19 @@ impl LibraryWindow {
     }
 
     fn draw_frame(&self, b: &mut Bitmap, skin: &Skin) {
-        let (w, h) = (self.w, self.h);
-        let draw = |b: &mut Bitmap, s: Sprite, x: i32, y: i32| skin.draw(b, s, x, y);
-        let a = self.focused;
-        let pick = |on: bool, x: Sprite, y: Sprite| if on { x } else { y };
-        let letters = skin
-            .sheet(Sheet::Gen)
-            .map(GenLetters::scan)
-            .unwrap_or_default();
-
-        // Title bar: corners, fills, and the title centered between two end caps.
-        const TITLE: &str = "MEDIA LIBRARY";
-        let title_w = letters.width(TITLE) + 8;
-        let center_x = (w - title_w) / 2;
-        let mut x = 25;
-        while x < w - 25 {
-            draw(
-                b,
-                pick(a, generic::TOP_FILL_ACTIVE, generic::TOP_FILL),
-                x,
-                0,
-            );
-            x += 25;
-        }
-        let mut x = center_x;
-        while x < center_x + title_w {
-            draw(
-                b,
-                pick(a, generic::TOP_CENTER_FILL_ACTIVE, generic::TOP_CENTER_FILL),
-                x,
-                0,
-            );
-            x += 25;
-        }
-        draw(
+        crate::gen_frame::draw_frame(
             b,
-            pick(a, generic::TOP_LEFT_END_ACTIVE, generic::TOP_LEFT_END),
-            center_x - 25,
-            0,
+            skin,
+            (self.w, self.h),
+            "MEDIA LIBRARY",
+            self.focused,
+            self.pressed == Some((Pressed::Close, true)),
         );
-        draw(
-            b,
-            pick(a, generic::TOP_RIGHT_END_ACTIVE, generic::TOP_RIGHT_END),
-            center_x + title_w,
-            0,
-        );
-        draw(
-            b,
-            pick(a, generic::TOP_LEFT_ACTIVE, generic::TOP_LEFT),
-            0,
-            0,
-        );
-        draw(
-            b,
-            pick(a, generic::TOP_RIGHT_ACTIVE, generic::TOP_RIGHT),
-            w - 25,
-            0,
-        );
-        letters.draw(skin, b, TITLE, center_x + 4, 4, a);
-        if self.pressed == Some((Pressed::Close, true)) {
-            let r = self.close_rect();
-            draw(b, generic::CLOSE_PRESSED, r.x, r.y);
-        }
-
-        // Sides, with the bottom-end pieces just above the bottom bar.
-        let side_bottom = h - generic::BOTTOM_H - 24;
-        let mut y = generic::TOP_H;
-        while y < side_bottom {
-            draw(b, generic::MIDDLE_LEFT, 0, y);
-            draw(b, generic::MIDDLE_RIGHT, w - generic::RIGHT_W, y);
-            y += 29;
-        }
-        draw(b, generic::MIDDLE_LEFT_BOTTOM, 0, side_bottom);
-        draw(
-            b,
-            generic::MIDDLE_RIGHT_BOTTOM,
-            w - generic::RIGHT_W,
-            side_bottom,
-        );
-        let mut x = 125;
-        while x < w - 125 {
-            draw(b, generic::BOTTOM_FILL, x, h - generic::BOTTOM_H);
-            x += 25;
-        }
-        draw(b, generic::BOTTOM_LEFT, 0, h - generic::BOTTOM_H);
-        draw(b, generic::BOTTOM_RIGHT, w - 125, h - generic::BOTTOM_H);
     }
 
     fn draw_button(&self, b: &mut Bitmap, skin: &Skin, which: Button) {
-        let r = self.button_rect(which);
-        if r.w < 8 {
-            return;
-        }
         let down = self.pressed == Some((Pressed::Button(which), true));
-        let (l, c, rt) = if down {
-            (
-                button::LEFT_PRESSED,
-                button::CENTER_PRESSED,
-                button::RIGHT_PRESSED,
-            )
-        } else {
-            (button::LEFT, button::CENTER, button::RIGHT)
-        };
-        // Tile the center piece, clipping the last tile to the button.
-        if let Some(sheet) = skin.sheet(c.sheet) {
-            let mut x = r.x + 4;
-            while x < r.x + r.w - 4 {
-                let w = c.rect.w.min(r.x + r.w - 4 - x);
-                b.blit(sheet, Rect::new(c.rect.x, c.rect.y, w, c.rect.h), x, r.y);
-                x += c.rect.w;
-            }
-        }
-        skin.draw(b, l, r.x, r.y);
-        skin.draw(b, rt, r.x + r.w - 4, r.y);
+        crate::gen_frame::draw_button(b, skin, self.button_rect(which), down);
     }
 
     /// A list pane's frame, header cells (raised), background, scrollbar and selection.

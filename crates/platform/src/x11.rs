@@ -39,6 +39,7 @@ x11rb::atom_manager! {
         _NET_WM_WINDOW_TYPE_NORMAL,
         _NET_WM_WINDOW_TYPE_UTILITY,
         _NET_WM_WINDOW_TYPE_POPUP_MENU,
+        _NET_WM_WINDOW_TYPE_DIALOG,
         _NET_WM_STATE_ABOVE,
         _NET_WM_STATE,
         _NET_WM_STATE_SKIP_TASKBAR,
@@ -404,6 +405,7 @@ impl X11Platform {
             WindowKind::Main => a._NET_WM_WINDOW_TYPE_NORMAL,
             WindowKind::Panel => a._NET_WM_WINDOW_TYPE_UTILITY,
             WindowKind::Popup => a._NET_WM_WINDOW_TYPE_POPUP_MENU,
+            WindowKind::Dialog => a._NET_WM_WINDOW_TYPE_DIALOG,
         };
         self.conn
             .change_property32(

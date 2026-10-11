@@ -601,6 +601,17 @@ impl Library {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Forgets every track under `folder` (a folder taken out of the library). Returns how
+    /// many were removed. Files are not touched.
+    pub fn remove_folder(&mut self, folder: &Path) -> Result<usize> {
+        let prefix = format!("{}/", folder.to_string_lossy().trim_end_matches('/'));
+        let pattern = format!("{}%", like_escape(&prefix));
+        Ok(self.conn.execute(
+            "DELETE FROM tracks WHERE path LIKE ?1 ESCAPE '\\'",
+            [&pattern],
+        )?)
+    }
+
     /// Counts a play of the file at `path` at `at` (Unix seconds). Returns false when the
     /// file is not in the library.
     pub fn record_play(&self, path: &Path, at: i64) -> Result<bool> {
@@ -923,6 +934,20 @@ mod tests {
         assert_eq!(t.plays.last_played, Some(300));
         assert!(t.plays.added_at.is_some());
         assert_eq!(t.size, 1);
+    }
+
+    #[test]
+    fn removing_a_folder_forgets_only_its_tracks() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        write(d, "keep/01 a.flac", b"1");
+        write(d, "drop/01 b.flac", b"2");
+        write(d, "drop_too_similar/01 c.flac", b"3");
+        let mut lib = Library::open_in_memory().unwrap();
+        scan(&mut lib, &[d.to_path_buf()], &FakeTags::new());
+        assert_eq!(lib.remove_folder(&d.join("drop/")).unwrap(), 1);
+        assert_eq!(titles(lib.search("", 10).unwrap()), ["01 c", "01 a"]);
+        assert!(d.join("drop/01 b.flac").exists(), "files stay");
     }
 
     #[test]

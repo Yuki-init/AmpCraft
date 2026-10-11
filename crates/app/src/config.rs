@@ -33,6 +33,9 @@ pub struct PlayerConfig {
     pub show_remaining: bool,
     /// Windows stay above other programs.
     pub always_on_top: bool,
+    /// Output device id (see `openamp-cli devices`); unset uses the system default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
     /// "spectrum", "oscilloscope" or "off".
     pub visualizer: String,
     /// Playlist position (0-based) of the track Play starts.
@@ -50,6 +53,7 @@ impl Default for PlayerConfig {
             skin: None,
             show_remaining: false,
             always_on_top: false,
+            device: None,
             visualizer: "spectrum".into(),
             current_track: None,
         }

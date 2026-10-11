@@ -34,6 +34,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 mod menus;
+mod prefs;
 use menus::MenuKind;
 
 const MAIN: PanelId = PanelId(1);
@@ -100,6 +101,8 @@ enum PickMode {
     LoadList,
     /// Playlist LIST > SAVE: write the playlist there.
     SaveList,
+    /// Preferences > Skins: load this skin file.
+    Skin,
 }
 
 struct Win {
@@ -157,6 +160,8 @@ struct App {
     scale: i32,
     /// The scale came from the user (flag or toggle) rather than the screen.
     scale_pinned: bool,
+    prefs: amp_ui::PrefsWindow,
+    prefs_win: prefs::PrefsWin,
     /// The open popup menu, its windows (one per level, reused) and how many are shown.
     menu: Option<menus::OpenMenu>,
     popups: Vec<WindowId>,
@@ -474,6 +479,7 @@ impl App {
             return Ok(());
         }
         match mode {
+            Some(PickMode::Skin) => return self.load_skin_file(paths[0].clone()),
             Some(PickMode::LoadList) => return self.load_playlist(&paths[0]),
             Some(PickMode::SaveList) => {
                 self.save_playlist(paths[0].clone());
@@ -576,10 +582,7 @@ impl App {
                 }
             }
             Action::Close => self.quit = true,
-            Action::Options => {
-                let at = self.platform.pointer()?;
-                self.open_menu(MenuKind::Options, at, true)?;
-            }
+            Action::Options => self.show_prefs()?,
             Action::Visualization => {
                 let at = self.platform.pointer()?;
                 self.open_menu(MenuKind::Visualization, at, true)?;
@@ -743,13 +746,31 @@ impl App {
         let Some(next) = amp_skin::theme::THEMES.get(index) else {
             return Ok(());
         };
-        self.skin = next.skin();
-        self.skin_path = Some(PathBuf::from(next.id));
+        log::info!("theme: {}", next.name);
+        self.apply_skin(next.skin(), PathBuf::from(next.id))
+    }
+
+    /// Loads a classic skin file chosen in the preferences.
+    fn load_skin_file(&mut self, path: PathBuf) -> Result<()> {
+        match Skin::load(&path) {
+            Ok(skin) => self.apply_skin(skin, path),
+            Err(e) => {
+                let msg = format!("Cannot load {}: {e}", path.display());
+                amp_app::dialog::show_message("Load skin", move || msg);
+                Ok(())
+            }
+        }
+    }
+
+    /// Switches every window to `skin`, remembering where it came from.
+    fn apply_skin(&mut self, skin: Skin, path: PathBuf) -> Result<()> {
+        self.skin = skin;
+        self.skin_path = Some(path);
         self.main.skin_changed();
         self.pl.skin_changed();
         self.lib.skin_changed();
+        self.prefs.skin_changed();
         self.apply_shapes()?;
-        log::info!("theme: {}", next.name);
         self.redraw(true)
     }
 
@@ -1201,7 +1222,7 @@ impl App {
 
     fn handle(&mut self, event: Event) -> Result<()> {
         let now_ms = self.now_ms();
-        if self.menu_event(&event)? {
+        if self.menu_event(&event)? || self.prefs_event(&event)? {
             return Ok(());
         }
         match event {
@@ -1508,6 +1529,7 @@ impl App {
             self.update();
             self.perf.record("update", start.elapsed());
             self.redraw(false)?;
+            self.redraw_prefs()?;
             let start = std::time::Instant::now();
             self.platform.flush()?;
             self.perf.record("flush", start.elapsed());
@@ -1579,7 +1601,17 @@ fn main() -> Result<()> {
     let (mut tap, analyzer) = amp_dsp::analyzer();
     let device = match args.audio {
         AudioArg::Device => {
-            Some(OutputDevice::open(args.device.as_deref()).context("opening audio device")?)
+            // The command line wins over the saved device; a saved device that is gone
+            // falls back to the system default.
+            let wanted = args.device.clone().or_else(|| config.player.device.clone());
+            Some(match OutputDevice::open(wanted.as_deref()) {
+                Ok(d) => d,
+                Err(e) if args.device.is_none() && wanted.is_some() => {
+                    log::warn!("saved audio device unavailable ({e}); using the default");
+                    OutputDevice::open(None).context("opening audio device")?
+                }
+                Err(e) => return Err(e).context("opening audio device"),
+            })
         }
         AudioArg::Null => None,
     };
@@ -1850,6 +1882,8 @@ fn main() -> Result<()> {
         tracker: MoveTracker::new(),
         scale,
         scale_pinned: pinned_scale.is_some(),
+        prefs: amp_ui::PrefsWindow::new(),
+        prefs_win: prefs::PrefsWin::default(),
         menu: None,
         popups: Vec::new(),
         popups_shown: 0,

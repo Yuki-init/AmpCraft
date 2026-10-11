@@ -2,12 +2,14 @@
 
 pub mod dock_drag;
 pub mod eq_window;
+pub mod gen_frame;
 pub mod grip;
 pub mod library_window;
 pub mod main_window;
 pub mod menu;
 pub mod move_tracker;
 pub mod playlist_window;
+pub mod prefs_window;
 pub mod render;
 pub mod text;
 pub mod vis;
@@ -22,6 +24,7 @@ pub use main_window::{Action, Control, MainWindow, NowPlaying, PlayState, Pointe
 pub use menu::{Mark, MenuColors, MenuEntry, MenuEvent, MenuStack};
 pub use move_tracker::MoveTracker;
 pub use playlist_window::{PlDown, PlaylistAction, PlaylistEntry, PlaylistWindow, SelectMods};
+pub use prefs_window::{Page, PrefsAction, PrefsDown, PrefsState, PrefsWindow};
 pub use render::scale_nearest;
 pub use text::{Mask, NoFallback, TextRenderer};
 pub use vis::{VisMode, Visualizer};

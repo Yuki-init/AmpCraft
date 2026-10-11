@@ -1,5 +1,5 @@
-//! The popup menus of the player binary: the main menu (right-click on the main window), the
-//! options menu (O button) and the visualization menu (V button, right-click on the
+//! The popup menus of the player binary: the main menu (right-click on the main window, with
+//! the options menu as a submenu) and the visualization menu (V button, right-click on the
 //! visualizer), what their items do, and the popup windows that show them.
 
 use super::*;
@@ -9,6 +9,7 @@ use amp_ui::{MenuEntry, MenuEvent, MenuStack};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum MenuCmd {
     About,
+    Preferences,
     OpenFiles,
     AddFiles,
     FileInfo,
@@ -69,6 +70,7 @@ pub(crate) fn skins_menu(s: &MenuState) -> Vec<MenuEntry<MenuCmd>> {
 
 pub(crate) fn options_menu(s: &MenuState) -> Vec<MenuEntry<MenuCmd>> {
     vec![
+        MenuEntry::item("Preferences...", MenuCmd::Preferences).shortcut("Ctrl+P"),
         MenuEntry::submenu("Skins", skins_menu(s)),
         MenuEntry::Separator,
         MenuEntry::item("Time elapsed", MenuCmd::ShowRemaining(false))
@@ -126,6 +128,7 @@ pub(crate) fn playback_menu() -> Vec<MenuEntry<MenuCmd>> {
 pub(crate) fn main_menu(s: &MenuState) -> Vec<MenuEntry<MenuCmd>> {
     vec![
         MenuEntry::item("About OpenAMP...", MenuCmd::About),
+        MenuEntry::item("Preferences...", MenuCmd::Preferences).shortcut("Ctrl+P"),
         MenuEntry::Separator,
         MenuEntry::item("Play files...", MenuCmd::OpenFiles).shortcut("L"),
         MenuEntry::item("Add files...", MenuCmd::AddFiles),
@@ -192,7 +195,6 @@ pub(crate) fn library_menu() -> Vec<MenuEntry<MenuCmd>> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuKind {
     Main,
-    Options,
     Visualization,
     PlaylistSort,
     PlaylistRemove,
@@ -219,6 +221,7 @@ pub(crate) fn shortcut(keysym: u32, mods: Modifiers) -> Option<MenuCmd> {
         .then_some(lower as u8 as char);
     Some(match (letter, mods.ctrl, mods.alt) {
         (Some('a'), true, false) => MenuCmd::AlwaysOnTop,
+        (Some('p'), true, false) => MenuCmd::Preferences,
         (Some('d'), true, false) => MenuCmd::DoubleSize,
         (Some('t'), true, false) => MenuCmd::ToggleRemaining,
         (Some('e'), false, true) => MenuCmd::TogglePlaylist,
@@ -257,7 +260,6 @@ impl App {
         let s = self.menu_state();
         let entries = match kind {
             MenuKind::Main => main_menu(&s),
-            MenuKind::Options => options_menu(&s),
             MenuKind::Visualization => vis_menu(&s),
             MenuKind::PlaylistSort => playlist_sort_menu(),
             MenuKind::PlaylistRemove => playlist_remove_menu(),
@@ -397,6 +399,7 @@ impl App {
             MenuCmd::About => {
                 amp_app::dialog::show_message("About OpenAMP", amp_app::info::about);
             }
+            MenuCmd::Preferences => self.show_prefs()?,
             MenuCmd::OpenFiles => self.open_dialog(PickMode::Replace),
             MenuCmd::AddFiles => self.open_dialog(PickMode::Append),
             MenuCmd::FileInfo => self.show_file_info(),
@@ -615,6 +618,7 @@ mod tests {
             labels(&m),
             [
                 "About OpenAMP...",
+                "Preferences...",
                 "-",
                 "Play files...",
                 "Add files...",

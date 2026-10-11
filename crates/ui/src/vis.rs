@@ -15,7 +15,7 @@ const BAR_FALL_PER_MS: f32 = 0.04;
 const PEAK_HOLD_MS: f32 = 400.0;
 const PEAK_FALL_PER_MS: f32 = 0.015;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum VisMode {
     #[default]
     Spectrum,

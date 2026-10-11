@@ -27,6 +27,8 @@ pub enum WindowKind {
     Panel,
     /// A menu: shown without the window manager, above everything, until hidden.
     Popup,
+    /// A dialog (preferences): framed by us, kept with its owner by the window manager.
+    Dialog,
 }
 
 /// Mouse pointer shapes the app asks for.

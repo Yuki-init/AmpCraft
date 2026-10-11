@@ -33,10 +33,15 @@ Six built-in themes are generated in code from popular color schemes: `dracula`,
 
 ## Menus and keys
 
-The buttons on the left of the main window: **O** opens the options menu, **A** keeps the
+The buttons on the left of the main window: **O** opens the preferences (also Ctrl+P), **A** keeps the
 player above other windows, **I** shows the current track's file info, **D** toggles double
 size and **V** opens the visualizer menu. Right-click the main window for the main menu (or
 the visualizer for its menu).
+
+The preferences window has four pages: General (always on top, size, time display),
+Playback (repeat, shuffle, visualizer, output device), Skins (built-in themes, loading a
+`.wsz`) and Media Library (folders, rescan). Changes apply at once and are saved, except the
+output device, which is used from the next start.
 
 The playlist's bottom buttons open their classic menus (click to open, then click an item,
 or press and drag to an item): **ADD** URL, folder or files; **REM** all, crop to the
@@ -63,6 +68,7 @@ drive).
 | Alt+E / Alt+G / Alt+L | Playlist / equalizer / media library |
 | Alt+S | Next built-in skin |
 | Alt+3 | File info |
+| Ctrl+P | Preferences |
 
 ## Arch Linux package
 
