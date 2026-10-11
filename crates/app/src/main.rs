@@ -120,6 +120,7 @@ struct App {
     saved_config: String,
     saved_playlist: String,
     last_save: Instant,
+    last_title_press: Option<(PanelId, Instant)>,
     #[cfg(target_os = "linux")]
     mpris: Option<amp_app::mpris::Mpris>,
     /// Last position reported over MPRIS and when, to detect jumps.
@@ -415,6 +416,7 @@ impl App {
             Action::SetEqualizerVisible(on) => self.set_panel_visible(EQ, on)?,
             Action::SetPlaylistVisible(on) => self.set_panel_visible(PL, on)?,
             Action::ToggleDoubleSize => self.set_scale(if self.scale == 1 { 2 } else { 1 })?,
+            Action::ToggleShade => self.toggle_shade(MAIN)?,
             Action::Minimize => {
                 if let Some(id) = self.wins.iter().find(|w| w.panel == MAIN).map(|w| w.id) {
                     self.platform.minimize(id)?;
@@ -436,6 +438,7 @@ impl App {
             }),
             PlaylistAction::AddFiles => self.open_dialog(PickMode::Append),
             PlaylistAction::Close => self.set_panel_visible(PL, false)?,
+            PlaylistAction::ToggleShade => self.toggle_shade(PL)?,
             PlaylistAction::Resize(w, h) => {
                 self.layout
                     .resize(PL, amp_dock::Size::new(w * self.scale, h * self.scale));
@@ -452,6 +455,7 @@ impl App {
             EqAction::SetPreamp(db) => self.eq_controls.set_preamp_db(db),
             EqAction::SetBand(i, db) => self.eq_controls.set_band_db(i, db),
             EqAction::Close => self.set_panel_visible(EQ, false)?,
+            EqAction::ToggleShade => self.toggle_shade(EQ)?,
             other => log::info!("{other:?}: not implemented yet"),
         }
         Ok(())
@@ -460,11 +464,30 @@ impl App {
     /// Applies the skin's region.txt shapes (main and equalizer) at the current scale.
     fn apply_shapes(&mut self) -> Result<()> {
         let regions = self.skin.regions().clone();
-        for (panel, polys) in [(MAIN, &regions.normal), (EQ, &regions.equalizer)] {
+        let shapes = [
+            (
+                MAIN,
+                self.main.shaded(),
+                &regions.normal,
+                &regions.window_shade,
+            ),
+            (
+                EQ,
+                self.eq.shaded,
+                &regions.equalizer,
+                &regions.equalizer_shade,
+            ),
+        ];
+        for (panel, shaded, normal, shade) in shapes {
             let Some(id) = self.wins.iter().find(|w| w.panel == panel).map(|w| w.id) else {
                 continue;
             };
-            let rects = amp_skin::region::shape_rects(polys, WIDTH, HEIGHT, self.scale).map(|rs| {
+            let (polys, height) = if shaded {
+                (shade, 14)
+            } else {
+                (normal, HEIGHT)
+            };
+            let rects = amp_skin::region::shape_rects(polys, WIDTH, height, self.scale).map(|rs| {
                 rs.into_iter()
                     .map(|r| Rect::new(r.x, r.y, r.w, r.h))
                     .collect::<Vec<_>>()
@@ -472,6 +495,38 @@ impl App {
             self.platform.set_shape(id, rects.as_deref())?;
         }
         Ok(())
+    }
+
+    /// Collapses or expands a window to its window-shade bar. Docked windows below follow.
+    fn toggle_shade(&mut self, panel: PanelId) -> Result<()> {
+        let (w, h) = match panel {
+            MAIN => {
+                self.main.set_shaded(!self.main.shaded());
+                (WIDTH, self.main.height())
+            }
+            EQ => {
+                self.eq.shaded = !self.eq.shaded;
+                (WIDTH, self.eq.height())
+            }
+            PL => {
+                self.pl.shaded = !self.pl.shaded;
+                (self.pl.size().0, self.pl.height())
+            }
+            _ => return Ok(()),
+        };
+        self.layout
+            .resize(panel, amp_dock::Size::new(w * self.scale, h * self.scale));
+        self.sync_windows()?;
+        self.apply_shapes()
+    }
+
+    fn shaded(&self, panel: PanelId) -> bool {
+        match panel {
+            MAIN => self.main.shaded(),
+            EQ => self.eq.shaded,
+            PL => self.pl.shaded,
+            _ => false,
+        }
     }
 
     fn set_scale(&mut self, scale: i32) -> Result<()> {
@@ -512,6 +567,7 @@ impl App {
                 visible: w.visible,
                 width: size.map(|s| s.0),
                 height: size.map(|s| s.1),
+                shaded: self.shaded(panel),
             })
         };
         let mut c = self.config.clone();
@@ -921,7 +977,16 @@ impl App {
                                 down == PlDown::DragWindow
                             }
                         };
-                        if drag_window {
+                        // A second press on a title bar within 400 ms toggles window shade.
+                        let double = drag_window
+                            && self.last_title_press.is_some_and(|(p, at)| {
+                                p == panel && at.elapsed() < Duration::from_millis(400)
+                            });
+                        if double && panel != LIB {
+                            self.last_title_press = None;
+                            self.toggle_shade(panel)?;
+                        } else if drag_window {
+                            self.last_title_press = Some((panel, Instant::now()));
                             self.drag.press(&self.layout, panel, root);
                         }
                     }
@@ -1313,8 +1378,14 @@ fn main() -> Result<()> {
     for (panel, title, kind, r) in rects {
         // Saved positions are desktop coordinates; otherwise the classic stack.
         let state = saved(panel);
+        // Shaded windows start as their 14 px bar (the library has no shade mode).
+        let h = if state.is_some_and(|s| s.shaded) && panel != LIB {
+            14
+        } else {
+            r.h
+        };
         let rect = match state {
-            Some(s) => Rect::new(s.x, s.y, r.w * scale, r.h * scale),
+            Some(s) => Rect::new(s.x, s.y, r.w * scale, h * scale),
             None => Rect::new(
                 origin.x + r.x * scale,
                 origin.y + r.y * scale,
@@ -1365,6 +1436,10 @@ fn main() -> Result<()> {
     eq_win.preamp_db = config.equalizer.preamp_db;
     eq_win.bands_db = config.equalizer.bands_db;
     let lib_shown = shown(LIB);
+    let was_shaded = |panel: PanelId| saved(panel).is_some_and(|s| s.shaded);
+    main.set_shaded(was_shaded(MAIN));
+    eq_win.shaded = was_shaded(EQ);
+    pl.shaded = was_shaded(PL);
 
     let mut app = App {
         platform,
@@ -1383,6 +1458,7 @@ fn main() -> Result<()> {
         saved_config: String::new(),
         saved_playlist: String::new(),
         last_save: Instant::now(),
+        last_title_press: None,
         #[cfg(target_os = "linux")]
         mpris: match amp_app::mpris::Mpris::start() {
             Ok(m) => Some(m),

@@ -66,6 +66,7 @@ pub enum PlaylistAction {
     Remove(Vec<EntryId>),
     AddFiles,
     Close,
+    ToggleShade,
     /// The window wants this (unscaled) size.
     Resize(i32, i32),
     /// A mini transport button.
@@ -96,6 +97,7 @@ pub struct PlaylistWindow {
     anchor: Option<usize>,
     scroll: usize,
     pub focused: bool,
+    pub shaded: bool,
     /// Now playing, for the mini time display.
     pub now: NowPlaying,
     pressed: Option<(PlControl, bool)>,
@@ -142,6 +144,7 @@ impl PlaylistWindow {
             anchor: None,
             scroll: 0,
             focused: false,
+            shaded: false,
             now: NowPlaying::default(),
             pressed: None,
             scroll_drag: None,
@@ -160,6 +163,11 @@ impl PlaylistWindow {
         self.w = snap(w, MIN_W, STEP_W);
         self.h = snap(h, MIN_H, STEP_H);
         self.clamp_scroll();
+    }
+
+    /// Unscaled height for the current mode ([`Self::size`] keeps the full height).
+    pub fn height(&self) -> i32 {
+        if self.shaded { 14 } else { self.h }
     }
 
     pub fn entries(&self) -> &[PlaylistEntry] {
@@ -303,6 +311,15 @@ impl PlaylistWindow {
         mods: SelectMods,
         now_ms: u64,
     ) -> (PlDown, Vec<PlaylistAction>) {
+        if self.shaded {
+            for c in [PlControl::Close, PlControl::Shade] {
+                if Self::inside(self.control_rect(c), p) {
+                    self.pressed = Some((c, true));
+                    return (PlDown::Control(c), Vec::new());
+                }
+            }
+            return (PlDown::DragWindow, Vec::new());
+        }
         let Some(control) = self.hit_test(p) else {
             return if p.y < TOP {
                 (PlDown::DragWindow, Vec::new())
@@ -406,6 +423,7 @@ impl PlaylistWindow {
         }
         let action = match control {
             PlControl::Close => PlaylistAction::Close,
+            PlControl::Shade => PlaylistAction::ToggleShade,
             PlControl::Add => PlaylistAction::AddFiles,
             PlControl::Remove => PlaylistAction::Remove(self.selected()),
             PlControl::Select => {
@@ -422,8 +440,7 @@ impl PlaylistWindow {
             PlControl::Stop => PlaylistAction::Transport(Action::Stop),
             PlControl::Next => PlaylistAction::Transport(Action::Next),
             PlControl::Eject => PlaylistAction::Transport(Action::Eject),
-            PlControl::Shade
-            | PlControl::Misc
+            PlControl::Misc
             | PlControl::ListMenu
             | PlControl::Resize
             | PlControl::Scrollbar
@@ -515,6 +532,9 @@ impl PlaylistWindow {
         scale: u32,
     ) -> Bitmap {
         let scale = scale.max(1);
+        if self.shaded {
+            return self.render_shade(skin, fallback, scale);
+        }
         let (w, h) = (self.w, self.h);
         let style = skin.playlist_style().clone();
         let mut b = Bitmap::new(w as u32, h as u32, style.normal_bg);
@@ -680,6 +700,83 @@ impl PlaylistWindow {
             Self::draw_row(&mut out, &title, &duration, list, y * s, s);
         }
         out
+    }
+
+    /// The shade bar: current track title and time, with close and unshade buttons.
+    fn render_shade(&mut self, skin: &Skin, fallback: &mut dyn TextRenderer, scale: u32) -> Bitmap {
+        let w = self.w;
+        let mut b = Bitmap::new(w as u32, 14, 0xFF00_0000);
+        let mut x = 25;
+        while x < w - 50 {
+            skin.draw(&mut b, sp::SHADE_TILE, x, 0);
+            x += 25;
+        }
+        skin.draw(&mut b, sp::SHADE_LEFT, 0, 0);
+        skin.draw(
+            &mut b,
+            if self.focused {
+                sp::SHADE_RIGHT_ACTIVE
+            } else {
+                sp::SHADE_RIGHT
+            },
+            w - 50,
+            0,
+        );
+        if self.pressed_on(PlControl::Close) {
+            let r = self.control_rect(PlControl::Close);
+            skin.draw(&mut b, sp::CLOSE_PRESSED, r.x, r.y);
+        }
+        if self.pressed_on(PlControl::Shade) {
+            let r = self.control_rect(PlControl::Shade);
+            skin.draw(&mut b, sp::UNSHADE_PRESSED, r.x, r.y);
+        }
+        let current = self.current.and_then(|id| {
+            let i = self.entries.iter().position(|e| e.id == id)?;
+            Some((i, self.entries[i].clone()))
+        });
+        let Some((i, entry)) = current else {
+            return crate::render::scale_nearest(&b, scale);
+        };
+        let color = skin.playlist_style().current;
+        let height = ROW_TEXT_H * scale;
+        let title = self.row_strip(
+            skin,
+            fallback,
+            &format!("{}. {}", i + 1, entry.title),
+            color,
+            height,
+        );
+        let time = self.row_strip(
+            skin,
+            fallback,
+            &duration_text(entry.duration),
+            color,
+            height,
+        );
+        // Skin-font text is drawn before scaling, system-font text after.
+        let draw_text = |dst: &mut Bitmap, unit: i32| {
+            // The time ends 30 px from the right, clear of the shade and close buttons.
+            let time_x = (w - 30) * unit - time.width();
+            let y = (14 * unit - title.height()) / 2;
+            let title_clip = Rect::new(5 * unit, 0, (time_x - 8 * unit).max(0), 14 * unit);
+            title.draw(dst, title_clip, y, 0, false, 0);
+            time.draw(
+                dst,
+                Rect::new(time_x, 0, time.width(), 14 * unit),
+                y,
+                0,
+                false,
+                0,
+            );
+        };
+        if title.is_bitmap() {
+            draw_text(&mut b, 1);
+            crate::render::scale_nearest(&b, scale)
+        } else {
+            let mut out = crate::render::scale_nearest(&b, scale);
+            draw_text(&mut out, scale as i32);
+            out
+        }
     }
 
     /// Draws a row's title (clipped) and right-aligned duration. `list` and `y` are in the
@@ -925,6 +1022,33 @@ mod tests {
         );
         w.set_entries(entries(3));
         assert_eq!(w.selected(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn shade_mode_bar() {
+        let skin = coded_skin();
+        let mut w = window(3);
+        let c = w.control_rect(PlControl::Shade);
+        let p = Point::new(c.x + 4, c.y + 4);
+        w.pointer_down(p, NONE, 0);
+        assert_eq!(w.pointer_up(p), vec![PlaylistAction::ToggleShade]);
+        w.shaded = true;
+        assert_eq!(w.height(), 14);
+        assert_eq!(w.size(), (275, 232), "full size is kept for unshading");
+        assert_eq!(
+            w.pointer_down(Point::new(100, 7), NONE, 0).0,
+            PlDown::DragWindow
+        );
+        w.pointer_down(p, NONE, 0);
+        assert_eq!(w.pointer_up(p), vec![PlaylistAction::ToggleShade]);
+        w.set_current(Some(2));
+        let b = w.render(&skin, &mut NoFallback, 0, 2);
+        assert_eq!((b.width(), b.height()), (550, 28));
+        assert_eq!(
+            b.get(0, 0),
+            Some(code(Sheet::Pledit, 72, 42)),
+            "left end of the bar"
+        );
     }
 
     #[test]

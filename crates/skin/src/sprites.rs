@@ -281,6 +281,11 @@ pub mod playlist {
     pub const MISC_OPTIONS_PRESSED: Sprite = s(Pledit, 177, 149, 22, 18);
     pub const LOAD_LIST: Sprite = s(Pledit, 204, 149, 22, 18);
     pub const LOAD_LIST_PRESSED: Sprite = s(Pledit, 227, 149, 22, 18);
+    pub const SHADE_LEFT: Sprite = s(Pledit, 72, 42, 25, 14);
+    pub const SHADE_TILE: Sprite = s(Pledit, 72, 57, 25, 14);
+    pub const SHADE_RIGHT: Sprite = s(Pledit, 99, 57, 50, 14);
+    pub const SHADE_RIGHT_ACTIVE: Sprite = s(Pledit, 99, 42, 50, 14);
+    pub const UNSHADE_PRESSED: Sprite = s(Pledit, 150, 42, 9, 9);
 
     pub const ALL: &[Sprite] = &[
         TOP_LEFT,
@@ -338,6 +343,13 @@ pub mod eq {
     pub const GRAPH_BACKGROUND: Sprite = s(EqMain, 0, 294, 113, 19);
     pub const GRAPH_LINE_COLORS: Sprite = s(EqMain, 115, 294, 1, 19);
     pub const PREAMP_LINE: Sprite = s(EqMain, 0, 314, 113, 1);
+
+    /// Window-shade bar (EQ_EX.BMP).
+    pub const SHADE_BACKGROUND_ACTIVE: Sprite = s(super::Sheet::EqEx, 0, 0, 275, 14);
+    pub const SHADE_BACKGROUND: Sprite = s(super::Sheet::EqEx, 0, 15, 275, 14);
+    pub const SHADE_UNSHADE_PRESSED: Sprite = s(super::Sheet::EqEx, 1, 38, 9, 9);
+    pub const SHADE_CLOSE: Sprite = s(super::Sheet::EqEx, 11, 38, 9, 9);
+    pub const SHADE_CLOSE_PRESSED: Sprite = s(super::Sheet::EqEx, 11, 47, 9, 9);
 
     pub const SLIDER_W: i32 = 14;
     pub const SLIDER_H: i32 = 63;

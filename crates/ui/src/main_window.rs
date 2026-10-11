@@ -133,6 +133,33 @@ pub fn hit_test(p: Point) -> Option<Control> {
     Control::ALL.into_iter().find(|c| c.contains(p))
 }
 
+/// Height of the window-shade bar.
+pub const SHADE_HEIGHT: i32 = 14;
+
+/// Where a control sits in window-shade mode (most controls are absent).
+const fn shade_rect(c: Control) -> Option<Rect> {
+    let (x, y, w, h) = match c {
+        Control::Options => (6, 3, 9, 9),
+        Control::Minimize => (244, 3, 9, 9),
+        Control::Shade => (254, 3, 9, 9),
+        Control::Close => (264, 3, 9, 9),
+        Control::Previous => (169, 2, 7, 10),
+        Control::Play => (176, 2, 10, 10),
+        Control::Pause => (186, 2, 9, 10),
+        Control::Stop => (195, 2, 9, 10),
+        Control::Next => (204, 2, 10, 10),
+        Control::Eject => (215, 2, 10, 10),
+        Control::Position => (226, 4, 17, 7),
+        Control::Time => (127, 4, 25, 6),
+        _ => return None,
+    };
+    Some(Rect::new(x, y, w, h))
+}
+
+fn rect_contains(r: Rect, p: Point) -> bool {
+    p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h
+}
+
 /// Something the user asked for.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Action {
@@ -215,6 +242,7 @@ pub struct MainWindow {
     playlist_visible: bool,
     double_size: bool,
     show_remaining: bool,
+    shaded: bool,
     pressed: Option<Pressed>,
     /// Slider being dragged and its live value.
     slider: Option<(Control, f32)>,
@@ -262,6 +290,7 @@ impl MainWindow {
             playlist_visible: false,
             double_size: false,
             show_remaining: false,
+            shaded: false,
             pressed: None,
             slider: None,
             title_cache: None,
@@ -320,6 +349,38 @@ impl MainWindow {
         self.double_size = on;
     }
 
+    /// Window-shade mode: the window collapses to a 14 px bar.
+    pub fn shaded(&self) -> bool {
+        self.shaded
+    }
+
+    pub fn set_shaded(&mut self, on: bool) {
+        self.shaded = on;
+        self.pressed = None;
+        self.slider = None;
+    }
+
+    /// Unscaled window height for the current mode.
+    pub fn height(&self) -> i32 {
+        if self.shaded { SHADE_HEIGHT } else { HEIGHT }
+    }
+
+    fn rect_of(&self, c: Control) -> Option<Rect> {
+        if self.shaded {
+            shade_rect(c)
+        } else {
+            Some(c.rect())
+        }
+    }
+
+    fn inside(&self, c: Control, p: Point) -> bool {
+        self.rect_of(c).is_some_and(|r| rect_contains(r, p))
+    }
+
+    fn hit(&self, p: Point) -> Option<Control> {
+        Control::ALL.into_iter().find(|c| self.inside(*c, p))
+    }
+
     pub fn set_show_remaining(&mut self, on: bool) {
         self.show_remaining = on;
     }
@@ -337,7 +398,11 @@ impl MainWindow {
         self.now.state != PlayState::Stopped && self.now.duration.is_some_and(|d| !d.is_zero())
     }
 
-    fn slider_value(control: Control, p: Point) -> f32 {
+    fn slider_value(&self, control: Control, p: Point) -> f32 {
+        if self.shaded && control == Control::Position {
+            // The shade bar's 3 px thumb travels 14 px.
+            return clamp01((p.x - 226 - 1) as f32 / 14.0);
+        }
         match control {
             Control::Volume => {
                 clamp01((p.x - Control::Volume.rect().x - THUMB_HALF) as f32 / VOLUME_TRAVEL as f32)
@@ -374,17 +439,17 @@ impl MainWindow {
 
     /// Button press at `p`. Returns what took the press and any immediate actions.
     pub fn pointer_down(&mut self, p: Point) -> (PointerDown, Vec<Action>) {
-        let Some(control) = hit_test(p) else {
+        let Some(control) = self.hit(p) else {
             return (PointerDown::DragWindow, Vec::new());
         };
         match control {
             Control::Volume | Control::Balance => {
-                self.slider = Some((control, Self::slider_value(control, p)));
+                self.slider = Some((control, self.slider_value(control, p)));
                 (PointerDown::Control(control), self.live_slider_actions())
             }
             Control::Position => {
                 if self.seekable() {
-                    self.slider = Some((control, Self::slider_value(control, p)));
+                    self.slider = Some((control, self.slider_value(control, p)));
                 }
                 (PointerDown::Control(control), Vec::new())
             }
@@ -401,11 +466,14 @@ impl MainWindow {
     /// Pointer motion while a button is held.
     pub fn pointer_move(&mut self, p: Point) -> Vec<Action> {
         if let Some((control, _)) = self.slider {
-            self.slider = Some((control, Self::slider_value(control, p)));
+            self.slider = Some((control, self.slider_value(control, p)));
             return self.live_slider_actions();
         }
-        if let Some(pressed) = self.pressed.as_mut() {
-            pressed.inside = pressed.control.contains(p);
+        if let Some(control) = self.pressed.map(|p| p.control) {
+            let inside = self.inside(control, p);
+            if let Some(pressed) = self.pressed.as_mut() {
+                pressed.inside = inside;
+            }
         }
         Vec::new()
     }
@@ -413,7 +481,7 @@ impl MainWindow {
     /// Button release.
     pub fn pointer_up(&mut self, p: Point) -> Vec<Action> {
         if let Some((control, _)) = self.slider {
-            self.slider = Some((control, Self::slider_value(control, p)));
+            self.slider = Some((control, self.slider_value(control, p)));
             let mut actions = self.live_slider_actions();
             if let Some((Control::Position, f)) = self.slider {
                 actions.push(Action::Seek(f));
@@ -424,7 +492,7 @@ impl MainWindow {
         let Some(pressed) = self.pressed.take() else {
             return Vec::new();
         };
-        if !pressed.control.contains(p) {
+        if !self.inside(pressed.control, p) {
             return Vec::new();
         }
         self.click(pressed.control).into_iter().collect()
@@ -570,6 +638,72 @@ impl MainWindow {
         (strip, scroll)
     }
 
+    /// The window-shade bar: buttons, mini time and a tiny position slider.
+    fn render_shade(&self, skin: &Skin, now_ms: u64, scale: u32) -> Bitmap {
+        let mut b = Bitmap::new(WIDTH as u32, SHADE_HEIGHT as u32, 0xFF00_0000);
+        let draw = |b: &mut Bitmap, s: Sprite, x: i32, y: i32| {
+            skin.draw(b, s, x, y);
+        };
+        draw(
+            &mut b,
+            if self.focused {
+                main::SHADE_BACKGROUND_ACTIVE
+            } else {
+                main::SHADE_BACKGROUND
+            },
+            0,
+            0,
+        );
+        for (c, normal, down) in [
+            (Control::Minimize, main::MINIMIZE, main::MINIMIZE_PRESSED),
+            (Control::Shade, main::UNSHADE, main::UNSHADE_PRESSED),
+            (Control::Close, main::CLOSE, main::CLOSE_PRESSED),
+        ] {
+            if let Some(r) = shade_rect(c) {
+                draw(
+                    &mut b,
+                    if self.pressed_on(c) { down } else { normal },
+                    r.x,
+                    r.y,
+                );
+            }
+        }
+        let blink_off = self.now.state == PlayState::Paused && (now_ms / 500) % 2 == 1;
+        if self.now.state != PlayState::Stopped && !blink_off {
+            let shown = match (self.show_remaining, self.now.duration) {
+                (true, Some(d)) => d.saturating_sub(self.now.position),
+                _ => self.now.position,
+            };
+            let secs = shown.as_secs();
+            let sign = if self.show_remaining && self.now.duration.is_some() {
+                "-"
+            } else {
+                " "
+            };
+            let text = format!("{sign}{:>2}:{:02}", (secs / 60).min(99), secs % 60);
+            skin.draw_text(&mut b, &text, 127, 4);
+        }
+        draw(&mut b, main::SHADE_POSITION_BACKGROUND, 226, 4);
+        if self.seekable() {
+            let f = match self.slider {
+                Some((Control::Position, f)) => f,
+                _ => match self.now.duration {
+                    Some(d) => clamp01(self.now.position.as_secs_f32() / d.as_secs_f32()),
+                    None => 0.0,
+                },
+            };
+            let thumb = if f < 0.07 {
+                main::SHADE_POSITION_THUMB_LEFT
+            } else if f > 0.93 {
+                main::SHADE_POSITION_THUMB_RIGHT
+            } else {
+                main::SHADE_POSITION_THUMB
+            };
+            draw(&mut b, thumb, 226 + 1 + (f * 14.0).round() as i32, 4);
+        }
+        crate::render::scale_nearest(&b, scale)
+    }
+
     fn pressed_on(&self, c: Control) -> bool {
         self.pressed.is_some_and(|p| p.control == c && p.inside)
     }
@@ -585,6 +719,9 @@ impl MainWindow {
         scale: u32,
     ) -> Bitmap {
         let scale = scale.max(1);
+        if self.shaded {
+            return self.render_shade(skin, now_ms, scale);
+        }
         let mut b = Bitmap::new(WIDTH as u32, HEIGHT as u32, 0xFF00_0000);
         let draw = |b: &mut Bitmap, s: Sprite, x: i32, y: i32| {
             skin.draw(b, s, x, y);
@@ -1163,6 +1300,45 @@ mod tests {
         w.now.title = "ASCII".into();
         let b = w.render(&skin, &mut rec, 0, 2);
         assert_eq!(b.get(2 * 120, 2 * 27), b.get(2 * 120 + 1, 2 * 27 + 1));
+    }
+
+    #[test]
+    fn shade_mode_has_its_own_controls_and_render() {
+        let skin = coded_skin();
+        let mut w = MainWindow::new();
+        w.now = playing(83, 300);
+        w.set_shaded(true);
+        assert_eq!(w.height(), SHADE_HEIGHT);
+        // Mini play button and the unshade button act; full-size controls are gone.
+        for (p, a) in [
+            (Point::new(180, 7), Action::Play),
+            (Point::new(258, 7), Action::ToggleShade),
+        ] {
+            w.pointer_down(p);
+            assert_eq!(w.pointer_up(p), vec![a]);
+        }
+        assert_eq!(
+            w.pointer_down(Point::new(140, 100)).0,
+            PointerDown::DragWindow
+        );
+        // The tiny position bar seeks.
+        w.pointer_down(Point::new(227, 6));
+        assert_eq!(w.pointer_up(Point::new(241, 6)), vec![Action::Seek(1.0)]);
+        let b = w.render(&skin, &mut NoFallback, 0, 2);
+        assert_eq!((b.width(), b.height()), (550, 28));
+        let b = w.render(&skin, &mut NoFallback, 0, 1);
+        assert_eq!(
+            b.get(0, 0),
+            Some(code(Sheet::Titlebar, 27, 29)),
+            "active shade background"
+        );
+        assert_eq!(
+            b.get(254, 3),
+            Some(code(Sheet::Titlebar, 0, 27)),
+            "unshade button"
+        );
+        w.set_shaded(false);
+        assert_eq!(w.height(), HEIGHT);
     }
 
     #[test]

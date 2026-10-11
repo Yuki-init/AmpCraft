@@ -66,6 +66,7 @@ pub enum EqAction {
     SetBand(usize, f32),
     Presets,
     Close,
+    ToggleShade,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +82,7 @@ pub struct EqWindow {
     pub preamp_db: f32,
     pub bands_db: [f32; 10],
     pub focused: bool,
+    pub shaded: bool,
     pressed: Option<(EqControl, bool)>,
     /// Slider being dragged.
     slider: Option<EqControl>,
@@ -94,6 +96,20 @@ fn level(db: f32) -> f32 {
 impl EqWindow {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Unscaled height for the current mode.
+    pub fn height(&self) -> i32 {
+        if self.shaded { 14 } else { HEIGHT }
+    }
+
+    fn hit(&self, p: Point) -> Option<EqControl> {
+        if self.shaded {
+            return [EqControl::Close, EqControl::Shade]
+                .into_iter()
+                .find(|c| c.contains(p));
+        }
+        EqControl::all().find(|c| c.contains(p))
     }
 
     pub fn is_interacting(&self) -> bool {
@@ -123,7 +139,7 @@ impl EqWindow {
     }
 
     pub fn pointer_down(&mut self, p: Point) -> (EqDown, Vec<EqAction>) {
-        let Some(control) = EqControl::all().find(|c| c.contains(p)) else {
+        let Some(control) = self.hit(p) else {
             return (EqDown::DragWindow, Vec::new());
         };
         match control {
@@ -168,6 +184,7 @@ impl EqWindow {
                 vec![EqAction::SetAuto(self.auto)]
             }
             EqControl::Presets => vec![EqAction::Presets],
+            EqControl::Shade => vec![EqAction::ToggleShade],
             EqControl::Close => vec![EqAction::Close],
             _ => Vec::new(),
         }
@@ -179,6 +196,25 @@ impl EqWindow {
 
     /// Draws the window at `scale` (pixel doubling; the equalizer has no text).
     pub fn render(&self, skin: &Skin, scale: u32) -> Bitmap {
+        if self.shaded {
+            let mut b = Bitmap::new(WIDTH as u32, 14, 0xFF00_0000);
+            let bg = if self.focused {
+                sp::SHADE_BACKGROUND_ACTIVE
+            } else {
+                sp::SHADE_BACKGROUND
+            };
+            skin.draw(&mut b, bg, 0, 0);
+            if self.pressed_on(EqControl::Shade) {
+                skin.draw(&mut b, sp::SHADE_UNSHADE_PRESSED, 254, 3);
+            }
+            let close = if self.pressed_on(EqControl::Close) {
+                sp::SHADE_CLOSE_PRESSED
+            } else {
+                sp::SHADE_CLOSE
+            };
+            skin.draw(&mut b, close, 264, 3);
+            return crate::render::scale_nearest(&b, scale);
+        }
         let mut b = Bitmap::new(WIDTH as u32, HEIGHT as u32, 0xFF00_0000);
         let draw = |b: &mut Bitmap, s: Sprite, x: i32, y: i32| {
             skin.draw(b, s, x, y);
@@ -336,6 +372,31 @@ mod tests {
         );
         let (_, a) = w.pointer_down(center(EqControl::Preamp));
         assert!(matches!(a[..], [EqAction::SetPreamp(_)]));
+    }
+
+    #[test]
+    fn shade_toggles_and_keeps_only_bar_controls() {
+        let skin = coded_skin();
+        let mut w = EqWindow::new();
+        w.pointer_down(center(EqControl::Shade));
+        assert_eq!(
+            w.pointer_up(center(EqControl::Shade)),
+            vec![EqAction::ToggleShade]
+        );
+        w.shaded = true;
+        assert_eq!(w.height(), 14);
+        assert_eq!(
+            w.pointer_down(center(EqControl::On)).0,
+            EqDown::DragWindow,
+            "no sliders in shade"
+        );
+        w.pointer_down(center(EqControl::Close));
+        assert_eq!(
+            w.pointer_up(center(EqControl::Close)),
+            vec![EqAction::Close]
+        );
+        let b = w.render(&skin, 2);
+        assert_eq!((b.width(), b.height()), (550, 28));
     }
 
     #[test]

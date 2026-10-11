@@ -71,6 +71,9 @@ pub struct WindowState {
     pub width: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<i32>,
+    /// Collapsed to the window-shade bar.
+    #[serde(default)]
+    pub shaded: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -236,6 +239,7 @@ mod tests {
             visible: true,
             width: Some(325),
             height: Some(290),
+            shaded: true,
         });
         c.windows.main = Some(WindowState {
             x: 100,
@@ -243,6 +247,7 @@ mod tests {
             visible: true,
             width: None,
             height: None,
+            shaded: false,
         });
         c.save(&path).unwrap();
         assert_eq!(Config::load(&path).unwrap(), c);
