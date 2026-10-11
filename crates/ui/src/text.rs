@@ -108,6 +108,35 @@ impl TextStrip {
         Self { pixels, used }
     }
 
+    /// Renders `text` with the fallback renderer in `color` (playlist rows use the system
+    /// font in pledit.txt colors). Falls back to the bitmap font if the renderer cannot.
+    pub fn colored(
+        skin: &Skin,
+        fallback: &mut dyn TextRenderer,
+        text: &str,
+        height: u32,
+        color: u32,
+    ) -> Self {
+        if let Some(mask) = fallback.render(text, height) {
+            let mut pixels = Bitmap::new(mask.width, mask.height, color);
+            for (p, a) in pixels.pixels_mut().iter_mut().zip(&mask.alpha) {
+                *p = (*p & 0x00FF_FFFF) | u32::from(*a) << 24;
+            }
+            let used = mask.alpha.iter().map(|a| *a > 0).collect();
+            return Self { pixels, used };
+        }
+        let width = font::text_width(text).max(0) as u32;
+        let mut pixels = Bitmap::new(width, font::CHAR_H as u32, 0);
+        skin.draw_text(&mut pixels, text, 0, 0);
+        // Only the glyph pixels, not the font's background, in a list.
+        let (bg, _) = text_colors(skin);
+        let used = pixels.pixels().iter().map(|p| *p != bg).collect();
+        for p in pixels.pixels_mut() {
+            *p |= 0xFF00_0000;
+        }
+        Self { pixels, used }
+    }
+
     pub fn width(&self) -> i32 {
         self.pixels.width() as i32
     }

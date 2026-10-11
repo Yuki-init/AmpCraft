@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use amp_skin::sprites::main;
+use amp_skin::sprites::{self, main};
 use amp_skin::{Sheet, Skin};
 
 fn local_skin() -> Option<PathBuf> {
@@ -28,7 +28,11 @@ fn base_skin_matches_sprite_maps() {
             eprintln!("{:<14} {}x{}", sheet.file_name(), b.width(), b.height());
         }
     }
-    for s in main::ALL {
+    for s in main::ALL
+        .iter()
+        .chain(sprites::playlist::ALL)
+        .chain(sprites::eq::ALL)
+    {
         let sheet = skin.sheet(s.sheet).unwrap();
         assert!(sheet.contains_rect(s.rect), "{s:?} outside {sheet:?}");
     }

@@ -249,6 +249,136 @@ pub mod main {
     ];
 }
 
+/// Playlist window sprites (PLEDIT.BMP). The frame is tiled to any size.
+pub mod playlist {
+    use super::{Sheet::Pledit, Sprite, s};
+
+    pub const TOP_LEFT: Sprite = s(Pledit, 0, 21, 25, 20);
+    pub const TOP_LEFT_ACTIVE: Sprite = s(Pledit, 0, 0, 25, 20);
+    pub const TITLE: Sprite = s(Pledit, 26, 21, 100, 20);
+    pub const TITLE_ACTIVE: Sprite = s(Pledit, 26, 0, 100, 20);
+    pub const TOP_TILE: Sprite = s(Pledit, 127, 21, 25, 20);
+    pub const TOP_TILE_ACTIVE: Sprite = s(Pledit, 127, 0, 25, 20);
+    pub const TOP_RIGHT: Sprite = s(Pledit, 153, 21, 25, 20);
+    pub const TOP_RIGHT_ACTIVE: Sprite = s(Pledit, 153, 0, 25, 20);
+    pub const LEFT_TILE: Sprite = s(Pledit, 0, 42, 12, 29);
+    pub const RIGHT_TILE: Sprite = s(Pledit, 31, 42, 20, 29);
+    pub const BOTTOM_TILE: Sprite = s(Pledit, 179, 0, 25, 38);
+    pub const BOTTOM_LEFT: Sprite = s(Pledit, 0, 72, 125, 38);
+    pub const BOTTOM_RIGHT: Sprite = s(Pledit, 126, 72, 150, 38);
+    pub const VISUALIZER_BACKGROUND: Sprite = s(Pledit, 205, 0, 75, 38);
+    pub const SCROLL_HANDLE: Sprite = s(Pledit, 52, 53, 8, 18);
+    pub const SCROLL_HANDLE_PRESSED: Sprite = s(Pledit, 61, 53, 8, 18);
+    pub const CLOSE_PRESSED: Sprite = s(Pledit, 52, 42, 9, 9);
+    pub const SHADE_PRESSED: Sprite = s(Pledit, 62, 42, 9, 9);
+    pub const ADD_FILE: Sprite = s(Pledit, 0, 149, 22, 18);
+    pub const ADD_FILE_PRESSED: Sprite = s(Pledit, 23, 149, 22, 18);
+    pub const REMOVE_SELECTED: Sprite = s(Pledit, 54, 149, 22, 18);
+    pub const REMOVE_SELECTED_PRESSED: Sprite = s(Pledit, 77, 149, 22, 18);
+    pub const SELECT_ALL: Sprite = s(Pledit, 104, 149, 22, 18);
+    pub const SELECT_ALL_PRESSED: Sprite = s(Pledit, 127, 149, 22, 18);
+    pub const MISC_OPTIONS: Sprite = s(Pledit, 154, 149, 22, 18);
+    pub const MISC_OPTIONS_PRESSED: Sprite = s(Pledit, 177, 149, 22, 18);
+    pub const LOAD_LIST: Sprite = s(Pledit, 204, 149, 22, 18);
+    pub const LOAD_LIST_PRESSED: Sprite = s(Pledit, 227, 149, 22, 18);
+
+    pub const ALL: &[Sprite] = &[
+        TOP_LEFT,
+        TOP_LEFT_ACTIVE,
+        TITLE,
+        TITLE_ACTIVE,
+        TOP_TILE,
+        TOP_TILE_ACTIVE,
+        TOP_RIGHT,
+        TOP_RIGHT_ACTIVE,
+        LEFT_TILE,
+        RIGHT_TILE,
+        BOTTOM_TILE,
+        BOTTOM_LEFT,
+        BOTTOM_RIGHT,
+        VISUALIZER_BACKGROUND,
+        SCROLL_HANDLE,
+        SCROLL_HANDLE_PRESSED,
+        CLOSE_PRESSED,
+        SHADE_PRESSED,
+        ADD_FILE,
+        ADD_FILE_PRESSED,
+        REMOVE_SELECTED,
+        REMOVE_SELECTED_PRESSED,
+        SELECT_ALL,
+        SELECT_ALL_PRESSED,
+        MISC_OPTIONS,
+        MISC_OPTIONS_PRESSED,
+        LOAD_LIST,
+        LOAD_LIST_PRESSED,
+    ];
+}
+
+/// Equalizer window sprites (EQMAIN.BMP).
+pub mod eq {
+    use super::{Sheet::EqMain, Sprite, s};
+
+    pub const BACKGROUND: Sprite = s(EqMain, 0, 0, 275, 116);
+    pub const TITLE_BAR: Sprite = s(EqMain, 0, 149, 275, 14);
+    pub const TITLE_BAR_ACTIVE: Sprite = s(EqMain, 0, 134, 275, 14);
+    pub const CLOSE: Sprite = s(EqMain, 0, 116, 9, 9);
+    pub const CLOSE_PRESSED: Sprite = s(EqMain, 0, 125, 9, 9);
+    pub const ON: Sprite = s(EqMain, 10, 119, 26, 12);
+    pub const ON_PRESSED: Sprite = s(EqMain, 128, 119, 26, 12);
+    pub const ON_ACTIVE: Sprite = s(EqMain, 69, 119, 26, 12);
+    pub const ON_ACTIVE_PRESSED: Sprite = s(EqMain, 187, 119, 26, 12);
+    pub const AUTO: Sprite = s(EqMain, 36, 119, 32, 12);
+    pub const AUTO_PRESSED: Sprite = s(EqMain, 154, 119, 32, 12);
+    pub const AUTO_ACTIVE: Sprite = s(EqMain, 95, 119, 32, 12);
+    pub const AUTO_ACTIVE_PRESSED: Sprite = s(EqMain, 213, 119, 32, 12);
+    pub const PRESETS: Sprite = s(EqMain, 224, 164, 44, 12);
+    pub const PRESETS_PRESSED: Sprite = s(EqMain, 224, 176, 44, 12);
+    pub const SLIDER_THUMB: Sprite = s(EqMain, 0, 164, 11, 11);
+    pub const SLIDER_THUMB_PRESSED: Sprite = s(EqMain, 0, 176, 11, 11);
+    pub const GRAPH_BACKGROUND: Sprite = s(EqMain, 0, 294, 113, 19);
+    pub const GRAPH_LINE_COLORS: Sprite = s(EqMain, 115, 294, 1, 19);
+    pub const PREAMP_LINE: Sprite = s(EqMain, 0, 314, 113, 1);
+
+    pub const SLIDER_W: i32 = 14;
+    pub const SLIDER_H: i32 = 63;
+
+    /// Slider background for `level` in 0.0 (bottom, -12 dB) ..= 1.0 (top, +12 dB): 28
+    /// frames in two rows of 14, 15 px apart horizontally and 65 px vertically.
+    pub fn slider_frame(level: f32) -> Sprite {
+        let n = super::frame_index(level);
+        s(
+            EqMain,
+            13 + (n % 14) * 15,
+            164 + (n / 14) * 65,
+            SLIDER_W,
+            SLIDER_H,
+        )
+    }
+
+    pub const ALL: &[Sprite] = &[
+        BACKGROUND,
+        TITLE_BAR,
+        TITLE_BAR_ACTIVE,
+        CLOSE,
+        CLOSE_PRESSED,
+        ON,
+        ON_PRESSED,
+        ON_ACTIVE,
+        ON_ACTIVE_PRESSED,
+        AUTO,
+        AUTO_PRESSED,
+        AUTO_ACTIVE,
+        AUTO_ACTIVE_PRESSED,
+        PRESETS,
+        PRESETS_PRESSED,
+        SLIDER_THUMB,
+        SLIDER_THUMB_PRESSED,
+        GRAPH_BACKGROUND,
+        GRAPH_LINE_COLORS,
+        PREAMP_LINE,
+    ];
+}
+
 /// Volume and balance backgrounds have 28 frames, 15 px apart, each 13 px tall.
 pub const SLIDER_FRAMES: i32 = 28;
 

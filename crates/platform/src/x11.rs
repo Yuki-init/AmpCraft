@@ -23,8 +23,8 @@ use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
 use crate::{
-    Event, MouseButton, Platform, PlatformError, Point, Rect, Result, Size, WindowId, WindowKind,
-    WindowSpec,
+    Event, Modifiers, MouseButton, Platform, PlatformError, Point, Rect, Result, Size, WindowId,
+    WindowKind, WindowSpec,
 };
 
 x11rb::atom_manager! {
@@ -270,12 +270,18 @@ impl X11Platform {
             n => MouseButton::Other(n),
         };
         let p = |x: i16, y: i16| Point::new(i32::from(x), i32::from(y));
+        let mods = |state: xproto::KeyButMask| Modifiers {
+            shift: state.contains(xproto::KeyButMask::SHIFT),
+            ctrl: state.contains(xproto::KeyButMask::CONTROL),
+            alt: state.contains(xproto::KeyButMask::MOD1),
+        };
         Some(match ev {
             XEvent::ButtonPress(e) if known(e.event) => Event::ButtonDown {
                 window: WindowId(e.event),
                 button: button(e.detail),
                 local: p(e.event_x, e.event_y),
                 root: p(e.root_x, e.root_y),
+                mods: mods(e.state),
             },
             XEvent::ButtonRelease(e) if known(e.event) => Event::ButtonUp {
                 window: WindowId(e.event),
@@ -312,11 +318,13 @@ impl X11Platform {
                 window: WindowId(e.event),
                 keysym: self.keymap.keysym(e.detail),
                 pressed: true,
+                mods: mods(e.state),
             },
             XEvent::KeyRelease(e) if known(e.event) => Event::Key {
                 window: WindowId(e.event),
                 keysym: self.keymap.keysym(e.detail),
                 pressed: false,
+                mods: mods(e.state),
             },
             XEvent::ConfigureNotify(e) if known(e.window) => {
                 // Coordinates in ConfigureNotify are relative to the parent, which is a frame

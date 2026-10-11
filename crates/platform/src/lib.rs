@@ -42,6 +42,14 @@ pub enum MouseButton {
     Other(u8),
 }
 
+/// Keyboard modifiers held during an input event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+}
+
 /// Input and window events. `local` is relative to the window, `root` to the whole desktop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
@@ -50,6 +58,7 @@ pub enum Event {
         button: MouseButton,
         local: Point,
         root: Point,
+        mods: Modifiers,
     },
     ButtonUp {
         window: WindowId,
@@ -80,6 +89,7 @@ pub enum Event {
         window: WindowId,
         keysym: u32,
         pressed: bool,
+        mods: Modifiers,
     },
     /// The window's position or size changed, for whatever reason.
     Configured {

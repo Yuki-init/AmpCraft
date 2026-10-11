@@ -52,6 +52,7 @@ dependencies = [
  "amp-audio-out",
  "amp-core",
  "amp-dock",
+ "amp-dsp",
  "amp-platform",
  "amp-skin",
  "amp-ui",

@@ -224,6 +224,7 @@ fn injected_clicks_arrive_with_local_and_root_coordinates() {
             button: MouseButton::Left,
             local: Point::new(30, 20),
             root: Point::new(230, 170),
+            mods: amp_platform::Modifiers::default(),
         }
     );
     probe.button(false);
