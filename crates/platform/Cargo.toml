@@ -10,3 +10,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+amp-dock = { version = "0.1.0", path = "../dock" }
+log = "0.4.34"
+thiserror = "2.0.21"
+x11rb = { version = "0.14.0", features = ["shape", "randr", "xtest"] }
+
+[dev-dependencies]
+amp-ui = { path = "../ui" }
+x11rb = { version = "0.14.0", features = ["xtest", "shape"] }

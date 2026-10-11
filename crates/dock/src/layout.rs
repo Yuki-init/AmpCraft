@@ -45,6 +45,11 @@ impl Drag {
         self.panel
     }
 
+    /// Pointer position (desktop coordinates) when the drag began.
+    pub fn grab(&self) -> Point {
+        self.grab
+    }
+
     /// Every panel that moves with this drag, including the grabbed one.
     pub fn members(&self) -> impl Iterator<Item = PanelId> + '_ {
         self.members.iter().map(|(id, _)| *id)
@@ -243,6 +248,34 @@ impl Layout {
             self.set_rect(*id, start.translated(fx, fy));
         }
         self.rect(drag.panel)
+    }
+
+    /// Records that something other than us (usually the window manager) moved panel `id` to
+    /// `origin`. The rest of its docked cluster is shifted by the same amount so it stays
+    /// docked. Returns the other panels that must now move.
+    pub fn moved_externally(&mut self, id: PanelId, origin: Point) -> Vec<(PanelId, Rect)> {
+        let Some(old) = self.rect(id) else {
+            return Vec::new();
+        };
+        let (dx, dy) = (origin.x - old.x, origin.y - old.y);
+        if (dx, dy) == (0, 0) {
+            return Vec::new();
+        }
+        let group = self.cluster(id);
+        let mut moves = Vec::new();
+        for member in group {
+            if let Some(r) = self.rect(member) {
+                let moved = r.translated(dx, dy);
+                self.set_rect(member, moved);
+                if member != id {
+                    moves.push((member, moved));
+                }
+            }
+        }
+        if !self.is_visible(id) {
+            self.set_rect(id, old.translated(dx, dy));
+        }
+        moves
     }
 
     /// Moves any stranded panel back on screen. The leader's cluster moves as one block, as
@@ -593,6 +626,35 @@ mod tests {
         l.drag_to(&d, Point::new(500, 500));
         assert_eq!(l.rect(PL), Some(Rect::new(775, 500, 275, 300)));
         assert_eq!(l.rect(EQ), Some(Rect::new(500, 616, 275, 116)));
+    }
+
+    #[test]
+    fn external_move_carries_the_cluster() {
+        let mut l = stack();
+        l.insert(OTHER, Rect::new(900, 900, 50, 50));
+        // The window manager nudged the playlist up by 9 px.
+        let mut moves = l.moved_externally(PL, Point::new(100, 323));
+        moves.sort_by_key(|(id, _)| *id);
+        assert_eq!(
+            moves,
+            vec![
+                (MAIN, Rect::new(100, 91, 275, 116)),
+                (EQ, Rect::new(100, 207, 275, 116))
+            ]
+        );
+        assert_eq!(l.rect(PL), Some(Rect::new(100, 323, 275, 232)));
+        assert_eq!(l.cluster(MAIN), ids(&[MAIN, EQ, PL]));
+        assert_eq!(l.rect(OTHER), Some(Rect::new(900, 900, 50, 50)));
+    }
+
+    #[test]
+    fn external_move_of_lone_panel_and_no_op() {
+        let mut l = stack();
+        l.insert(OTHER, Rect::new(900, 900, 50, 50));
+        assert!(l.moved_externally(OTHER, Point::new(800, 800)).is_empty());
+        assert_eq!(l.rect(OTHER), Some(Rect::new(800, 800, 50, 50)));
+        assert!(l.moved_externally(MAIN, Point::new(100, 100)).is_empty());
+        assert!(l.moved_externally(PanelId(99), Point::new(0, 0)).is_empty());
     }
 
     const SCREEN: Rect = Rect::new(0, 0, 1920, 1080);

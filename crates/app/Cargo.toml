@@ -10,6 +10,11 @@ publish.workspace = true
 name = "openamp"
 path = "src/main.rs"
 
+# Two-window drag, snap and dock demo on the X11 backend.
+[[bin]]
+name = "openamp-dock-demo"
+path = "src/bin/dock_demo.rs"
+
 # Headless player for testing the engine without the GUI.
 [[bin]]
 name = "openamp-cli"
@@ -21,6 +26,10 @@ workspace = true
 [dependencies]
 amp-core = { path = "../core" }
 amp-audio-out = { path = "../audio-out" }
+amp-dock = { path = "../dock" }
+amp-platform = { path = "../platform" }
+amp-skin = { path = "../skin" }
+amp-ui = { path = "../ui" }
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 log = "0.4.34"
