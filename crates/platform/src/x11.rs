@@ -42,6 +42,7 @@ x11rb::atom_manager! {
         _NET_WM_STATE_SKIP_TASKBAR,
         _NET_WM_STATE_SKIP_PAGER,
         _NET_WORKAREA,
+        RESOURCE_MANAGER,
         _OPENAMP_WAKE,
     }
 }
@@ -432,6 +433,18 @@ impl X11Platform {
     }
 }
 
+/// Reads `Xft.dpi` from X resource text (`name:\tvalue` lines).
+fn xft_dpi(resources: &str) -> Option<u32> {
+    resources.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        if key.trim() != "Xft.dpi" {
+            return None;
+        }
+        let dpi = value.trim().parse::<f32>().ok()?;
+        (dpi >= 1.0).then(|| dpi.round() as u32)
+    })
+}
+
 fn intersect(a: Rect, b: Rect) -> Option<Rect> {
     let l = a.left().max(b.left());
     let t = a.top().max(b.top());
@@ -703,6 +716,24 @@ impl Platform for X11Platform {
         Ok(Point::new(i32::from(r.root_x), i32::from(r.root_y)))
     }
 
+    fn dpi(&self) -> Option<u32> {
+        // Xft.dpi from the root window's X resources, as set by the desktop's scaling.
+        let reply = self
+            .conn
+            .get_property(
+                false,
+                self.root,
+                self.atoms.RESOURCE_MANAGER,
+                AtomEnum::STRING,
+                0,
+                1 << 16,
+            )
+            .ok()?
+            .reply()
+            .ok()?;
+        xft_dpi(&String::from_utf8_lossy(&reply.value))
+    }
+
     fn screens(&self) -> Result<Vec<Rect>> {
         let mut monitors = Vec::new();
         if self.has_monitors
@@ -783,5 +814,19 @@ impl Drop for X11Platform {
         {
             log::error!("X11 event thread panicked");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::xft_dpi;
+
+    #[test]
+    fn reads_xft_dpi_from_resources() {
+        assert_eq!(xft_dpi("Xcursor.size:\t24\nXft.dpi:\t120\n"), Some(120));
+        assert_eq!(xft_dpi("Xft.dpi: 191.5"), Some(192));
+        assert_eq!(xft_dpi("Xft.antialias:\t1\n"), None);
+        assert_eq!(xft_dpi("Xft.dpi:\tabc"), None);
+        assert_eq!(xft_dpi(""), None);
     }
 }

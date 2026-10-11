@@ -44,7 +44,7 @@ struct Args {
     /// .wsz file or a skin folder. Defaults to the last one used. Alt+S cycles the themes.
     #[arg(long)]
     skin: Option<PathBuf>,
-    /// Integer UI scale. Defaults to the last one used.
+    /// Integer UI scale. Defaults to the last one chosen, else one picked from the screen.
     #[arg(long, value_parser = clap::value_parser!(u8).range(1..=3))]
     scale: Option<u8>,
     /// Audio output device (see `openamp-cli devices`).
@@ -143,6 +143,8 @@ struct App {
     drag: DockDrag,
     tracker: MoveTracker<WindowId>,
     scale: i32,
+    /// The scale came from the user (flag or toggle) rather than the screen.
+    scale_pinned: bool,
     player: Player,
     controls: Arc<Controls>,
     eq_controls: Arc<EqControls>,
@@ -487,7 +489,11 @@ impl App {
                 .with_queue(|q| q.set_repeat(if on { Repeat::All } else { Repeat::Off })),
             Action::SetEqualizerVisible(on) => self.set_panel_visible(EQ, on)?,
             Action::SetPlaylistVisible(on) => self.set_panel_visible(PL, on)?,
-            Action::ToggleDoubleSize => self.set_scale(if self.scale == 1 { 2 } else { 1 })?,
+            Action::ToggleDoubleSize => {
+                // Choosing a size by hand sticks across restarts.
+                self.scale_pinned = true;
+                self.set_scale(if self.scale == 1 { 2 } else { 1 })?
+            }
             Action::ToggleShade => self.toggle_shade(MAIN)?,
             Action::Minimize => {
                 if let Some(id) = self.wins.iter().find(|w| w.panel == MAIN).map(|w| w.id) {
@@ -671,7 +677,7 @@ impl App {
         c.player.balance = self.controls.balance();
         c.player.shuffle = self.main.shuffle();
         c.player.repeat = self.main.repeat();
-        c.player.scale = self.scale as u8;
+        c.player.scale = self.scale_pinned.then_some(self.scale as u8);
         c.player.skin = self.skin_path.clone();
         c.player.show_remaining = self.main.show_remaining();
         c.player.visualizer = match self.main.vis.mode {
@@ -1341,7 +1347,6 @@ fn main() -> Result<()> {
         }
         Err(e) => return Err(e),
     };
-    let scale = i32::from(args.scale.unwrap_or(config.player.scale).clamp(1, 3));
 
     let eq_controls = EqControls::new();
     let (mut tap, analyzer) = amp_dsp::analyzer();
@@ -1429,6 +1434,21 @@ fn main() -> Result<()> {
 
     let mut platform = X11Platform::connect().context("connecting to the display")?;
     let screens = platform.screens()?;
+    // A scale from the command line or a saved toggle wins; otherwise fit the screen.
+    let pinned_scale = args.scale.or(config.player.scale);
+    let scale = i32::from(
+        pinned_scale
+            .unwrap_or_else(|| {
+                let height = screens.first().map_or(0, |s| s.h);
+                let auto = amp_platform::auto_scale(height, platform.dpi());
+                log::info!(
+                    "screen height {height}, dpi {:?}: scale {auto}",
+                    platform.dpi()
+                );
+                auto
+            })
+            .clamp(1, 3),
+    );
     let origin = screens
         .first()
         .map_or(Point::new(100, 100), |s| Point::new(s.x + 100, s.y + 100));
@@ -1601,6 +1621,7 @@ fn main() -> Result<()> {
         drag: DockDrag::new(),
         tracker: MoveTracker::new(),
         scale,
+        scale_pinned: pinned_scale.is_some(),
         player,
         controls,
         eq_controls,

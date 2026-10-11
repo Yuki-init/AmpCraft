@@ -166,8 +166,48 @@ pub trait Platform {
     fn pointer(&self) -> Result<Point>;
     /// Usable area of each monitor, in desktop coordinates.
     fn screens(&self) -> Result<Vec<Rect>>;
+    /// The desktop's font DPI setting (96 is unscaled), when it has one.
+    fn dpi(&self) -> Option<u32>;
     /// Next event, waiting at most `timeout` (`None` waits forever).
     fn next_event(&mut self, timeout: Option<Duration>) -> Result<Option<Event>>;
     /// Sends buffered requests to the display.
     fn flush(&mut self) -> Result<()>;
+}
+
+/// Starting UI scale (1 to 3) for a monitor whose usable height is `height` pixels, given the
+/// desktop's DPI setting. Whichever of the two asks for more wins: 1440p-class screens and
+/// up get 2x, 5K-class get 3x, and so do desktops scaled to 175% / 275% and more.
+pub fn auto_scale(height: i32, dpi: Option<u32>) -> u8 {
+    let by_height = match height {
+        ..1300 => 1,
+        1300..2600 => 2,
+        _ => 3,
+    };
+    let by_dpi = match dpi.unwrap_or(96) {
+        ..168 => 1,
+        168..264 => 2,
+        _ => 3,
+    };
+    by_height.max(by_dpi)
+}
+
+#[cfg(test)]
+mod auto_scale_tests {
+    use super::auto_scale;
+
+    #[test]
+    fn picks_scale_from_height_and_dpi() {
+        assert_eq!(auto_scale(1080, None), 1);
+        assert_eq!(auto_scale(1024, Some(96)), 1);
+        // 1440p and 2560x1600 with a panel taking some height.
+        assert_eq!(auto_scale(1400, None), 2);
+        assert_eq!(auto_scale(1560, Some(120)), 2);
+        // 4K and 5K.
+        assert_eq!(auto_scale(2120, None), 2);
+        assert_eq!(auto_scale(2840, None), 3);
+        // A logical 1080p desktop scaled to 200% / 300%.
+        assert_eq!(auto_scale(1080, Some(192)), 2);
+        assert_eq!(auto_scale(1080, Some(288)), 3);
+        assert_eq!(auto_scale(1080, Some(144)), 1);
+    }
 }

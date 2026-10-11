@@ -24,8 +24,9 @@ pub struct PlayerConfig {
     pub balance: f32,
     pub shuffle: bool,
     pub repeat: bool,
-    /// UI scale, 1 to 3.
-    pub scale: u8,
+    /// UI scale, 1 to 3. Unset picks one from the screen at startup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scale: Option<u8>,
     /// Skin file or folder.
     pub skin: Option<PathBuf>,
     /// Time display shows remaining time.
@@ -43,7 +44,7 @@ impl Default for PlayerConfig {
             balance: 0.0,
             shuffle: false,
             repeat: false,
-            scale: 1,
+            scale: None,
             skin: None,
             show_remaining: false,
             visualizer: "spectrum".into(),
