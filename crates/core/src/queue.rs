@@ -145,6 +145,26 @@ impl Queue {
         true
     }
 
+    /// Puts entries in the display order of `order` (sorting, reversing). Unknown ids are
+    /// ignored; entries missing from `order` keep their relative order after the others.
+    pub fn reorder(&mut self, order: &[TrackId]) {
+        self.version += 1;
+        let rank: std::collections::HashMap<TrackId, usize> =
+            order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        // Stable sort: unranked entries go last, in their current order.
+        self.entries
+            .sort_by_key(|e| rank.get(&e.id).copied().unwrap_or(usize::MAX));
+    }
+
+    /// Shuffles the display order (the playlist's "randomize list").
+    pub fn randomize(&mut self) {
+        self.version += 1;
+        for i in (1..self.entries.len()).rev() {
+            let j = self.rng.below(i + 1);
+            self.entries.swap(i, j);
+        }
+    }
+
     pub fn repeat(&self) -> Repeat {
         self.repeat
     }
@@ -392,5 +412,27 @@ mod tests {
         assert!(q.move_entry(0, 2));
         assert_eq!(q.play_order(), vec![ids[1], ids[2], ids[0]]);
         assert!(!q.move_entry(5, 0));
+    }
+
+    #[test]
+    fn reorder_follows_the_given_ids() {
+        let mut q = Queue::new();
+        let ids = q.extend(["a", "b", "c", "d"]);
+        let v = q.version();
+        q.reorder(&[ids[2], ids[0], 999]);
+        let order: Vec<TrackId> = q.entries().iter().map(|e| e.id).collect();
+        assert_eq!(order, vec![ids[2], ids[0], ids[1], ids[3]]);
+        assert!(q.version() > v);
+    }
+
+    #[test]
+    fn randomize_keeps_every_entry() {
+        let mut q = Queue::with_seed(7);
+        let ids = q.extend((0..20).map(|i| format!("{i}")));
+        q.randomize();
+        let mut order: Vec<TrackId> = q.entries().iter().map(|e| e.id).collect();
+        assert_ne!(order, ids, "seeded shuffle moves something");
+        order.sort_unstable();
+        assert_eq!(order, ids);
     }
 }

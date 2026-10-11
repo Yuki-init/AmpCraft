@@ -1037,20 +1037,28 @@ fn pledit_bmp(c: &Colors) -> Bitmap {
     for i in 0..4 {
         b.fill_rect(Rect::new(126 + 146 - i * 3, 72 + 34, 1 + i * 3, 1), c.light);
     }
-    // Bottom-bar button pressed states (drawn over the buttons while held).
-    for (x, label) in [
-        (0, "ADD"),
-        (54, "REM"),
-        (104, "SEL"),
-        (154, "MISC"),
-        (204, "LIST"),
-    ] {
-        c.button(&mut b, Rect::new(x, 149, 22, 18), false, |b, r, n| {
-            text_centered(b, label, r, p.text, n)
-        });
-        c.button(&mut b, Rect::new(x + 23, 149, 22, 18), true, |b, r, n| {
-            text_centered(b, label, r, p.text, n)
-        });
+    // Bottom-bar button menus: items (normal, and selected 23 px right) stacked from y=111 in
+    // 19 px steps, plus the bar beside them.
+    let menus: [(i32, &[&str]); 5] = [
+        (0, &["URL", "DIR", "FILE"]),
+        (54, &["ALL", "CROP", "SEL", "MISC"]),
+        (104, &["INV", "NONE", "ALL"]),
+        (154, &["SORT", "INFO", "OPTS"]),
+        (204, &["NEW", "SAVE", "LOAD"]),
+    ];
+    for (x, labels) in menus {
+        for (i, label) in labels.iter().enumerate() {
+            let y = 111 + i as i32 * 19;
+            c.button(&mut b, Rect::new(x, y, 22, 18), false, |b, r, n| {
+                text_centered(b, label, r, p.text, n)
+            });
+            c.button(&mut b, Rect::new(x + 23, y, 22, 18), true, |b, r, n| {
+                text_centered(b, label, r, p.accent, n)
+            });
+        }
+        let bar_h = labels.len() as i32 * 18;
+        b.fill_rect(Rect::new(x + 46, 111, 3, bar_h), p.accent);
+        b.fill_rect(Rect::new(x + 46, 111, 1, bar_h), c.light);
     }
     b
 }

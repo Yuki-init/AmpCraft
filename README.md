@@ -38,6 +38,12 @@ player above other windows, **I** shows the current track's file info, **D** tog
 size and **V** opens the visualizer menu. Right-click the main window for the main menu (or
 the visualizer for its menu).
 
+The playlist's bottom buttons open their classic menus (click to open, then click an item,
+or press and drag to an item): **ADD** URL, folder or files; **REM** all, crop to the
+selection, selected, or misc (missing files, duplicates); **SEL** invert, none, all; **MISC**
+sort (title, file name, path, reverse, randomize), file info, options (reread titles); **LIST**
+new, save (.m3u8) and load (.m3u, .m3u8, .pls).
+
 | Key | Does |
 | --- | --- |
 | Z X C V B | Previous, play, pause, stop, next |

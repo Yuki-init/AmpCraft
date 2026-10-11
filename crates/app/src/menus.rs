@@ -25,6 +25,14 @@ pub(crate) enum MenuCmd {
     Vis(VisMode),
     Playback(Action),
     Exit,
+    SortByTitle,
+    SortByFileName,
+    SortByPath,
+    ReverseList,
+    RandomizeList,
+    RemoveMissing,
+    RemoveDuplicates,
+    RefreshTitles,
 }
 
 /// The settings menus show ticks for.
@@ -142,12 +150,43 @@ pub(crate) fn main_menu(s: &MenuState) -> Vec<MenuEntry<MenuCmd>> {
     ]
 }
 
+/// Playlist MISC > SORT.
+pub(crate) fn playlist_sort_menu() -> Vec<MenuEntry<MenuCmd>> {
+    vec![
+        MenuEntry::item("Sort by title", MenuCmd::SortByTitle),
+        MenuEntry::item("Sort by file name", MenuCmd::SortByFileName),
+        MenuEntry::item("Sort by path and file name", MenuCmd::SortByPath),
+        MenuEntry::Separator,
+        MenuEntry::item("Reverse list", MenuCmd::ReverseList),
+        MenuEntry::item("Randomize list", MenuCmd::RandomizeList),
+    ]
+}
+
+/// Playlist REM > MISC.
+pub(crate) fn playlist_remove_menu() -> Vec<MenuEntry<MenuCmd>> {
+    vec![
+        MenuEntry::item("Remove missing files", MenuCmd::RemoveMissing),
+        MenuEntry::item("Remove duplicate entries", MenuCmd::RemoveDuplicates),
+    ]
+}
+
+/// Playlist MISC > OPTS.
+pub(crate) fn playlist_misc_menu(s: &MenuState) -> Vec<MenuEntry<MenuCmd>> {
+    vec![
+        MenuEntry::item("Reread titles from files", MenuCmd::RefreshTitles),
+        MenuEntry::item("File info...", MenuCmd::FileInfo).enabled(s.has_track),
+    ]
+}
+
 /// Which menu to open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuKind {
     Main,
     Options,
     Visualization,
+    PlaylistSort,
+    PlaylistRemove,
+    PlaylistMisc,
 }
 
 /// An open menu and how it was opened.
@@ -209,6 +248,9 @@ impl App {
             MenuKind::Main => main_menu(&s),
             MenuKind::Options => options_menu(&s),
             MenuKind::Visualization => vis_menu(&s),
+            MenuKind::PlaylistSort => playlist_sort_menu(),
+            MenuKind::PlaylistRemove => playlist_remove_menu(),
+            MenuKind::PlaylistMisc => playlist_misc_menu(&s),
         };
         let screens = self.platform.screens()?;
         let screen = screens
@@ -383,6 +425,66 @@ impl App {
             MenuCmd::Vis(mode) => self.main.vis.mode = mode,
             MenuCmd::Playback(action) => self.act(action)?,
             MenuCmd::Exit => self.quit = true,
+            MenuCmd::SortByTitle | MenuCmd::SortByFileName | MenuCmd::SortByPath => {
+                let mut keyed: Vec<(String, TrackId)> = self
+                    .queue_cache
+                    .iter()
+                    .map(|(id, path)| {
+                        let key = match cmd {
+                            MenuCmd::SortByTitle => self.title_for(*id, path),
+                            MenuCmd::SortByFileName => path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                            _ => path.to_string_lossy().into_owned(),
+                        };
+                        (key.to_lowercase(), *id)
+                    })
+                    .collect();
+                keyed.sort();
+                let order: Vec<TrackId> = keyed.into_iter().map(|(_, id)| id).collect();
+                self.player.with_queue(|q| q.reorder(&order));
+            }
+            MenuCmd::ReverseList => {
+                let order: Vec<TrackId> =
+                    self.queue_cache.iter().rev().map(|(id, _)| *id).collect();
+                self.player.with_queue(|q| q.reorder(&order));
+            }
+            MenuCmd::RandomizeList => self.player.with_queue(|q| q.randomize()),
+            MenuCmd::RemoveMissing => {
+                let gone: Vec<TrackId> = self
+                    .queue_cache
+                    .iter()
+                    .filter(|(_, p)| !p.exists())
+                    .map(|(id, _)| *id)
+                    .collect();
+                self.player.with_queue(|q| {
+                    gone.iter().for_each(|id| {
+                        q.remove(*id);
+                    })
+                });
+            }
+            MenuCmd::RemoveDuplicates => {
+                let mut seen = HashSet::new();
+                let dups: Vec<TrackId> = self
+                    .queue_cache
+                    .iter()
+                    .filter(|(_, p)| !seen.insert(p.clone()))
+                    .map(|(id, _)| *id)
+                    .collect();
+                self.player.with_queue(|q| {
+                    dups.iter().for_each(|id| {
+                        q.remove(*id);
+                    })
+                });
+            }
+            MenuCmd::RefreshTitles => {
+                // Forget probed tags; the next update probes every entry again.
+                self.meta.clear();
+                self.requested.clear();
+                self.queue_version = u64::MAX;
+                self.entries_dirty = true;
+            }
         }
         Ok(())
     }
@@ -409,9 +511,12 @@ impl App {
     }
 
     pub(crate) fn show_file_info(&mut self) {
-        let Some(path) = self.info_track() else {
-            return;
-        };
+        if let Some(path) = self.info_track() {
+            self.show_file_info_for(path);
+        }
+    }
+
+    pub(crate) fn show_file_info_for(&mut self, path: PathBuf) {
         amp_app::dialog::show_message("File info", move || {
             match amp_core::Decoder::open(&path, 44_100) {
                 Ok(dec) => amp_app::info::describe(&path, dec.info()),
@@ -516,6 +621,24 @@ mod tests {
             ..MenuState::default()
         });
         assert!(item(&with_track, "File info...").enabled);
+    }
+
+    #[test]
+    fn playlist_menus() {
+        assert_eq!(
+            labels(&playlist_sort_menu()),
+            [
+                "Sort by title",
+                "Sort by file name",
+                "Sort by path and file name",
+                "-",
+                "Reverse list",
+                "Randomize list"
+            ]
+        );
+        assert_eq!(playlist_remove_menu().len(), 2);
+        let misc = playlist_misc_menu(&MenuState::default());
+        assert!(!item(&misc, "File info...").enabled);
     }
 
     #[test]

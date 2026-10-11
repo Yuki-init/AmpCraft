@@ -40,7 +40,7 @@ pub struct PlaylistEntry {
 }
 
 /// Clickable parts of the playlist window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlControl {
     Close,
     Shade,
@@ -60,11 +60,115 @@ pub enum PlControl {
     List,
 }
 
+/// An item of a bottom-bar button menu (ADD, REM, SEL, MISC, LIST).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PlMenuItem {
+    AddUrl,
+    AddDir,
+    AddFile,
+    RemoveAll,
+    Crop,
+    RemoveSelected,
+    RemoveMisc,
+    InvertSelection,
+    SelectNone,
+    SelectAll,
+    Sort,
+    FileInfo,
+    MiscOptions,
+    NewList,
+    SaveList,
+    LoadList,
+}
+
+/// The items of a button's menu, top to bottom, with their normal and selected sprites,
+/// and the bar drawn beside them.
+fn bar_menu_items(button: PlControl) -> (&'static [(PlMenuItem, Sprite, Sprite)], Sprite) {
+    use PlMenuItem::*;
+    match button {
+        PlControl::Add => (
+            &[
+                (AddUrl, sp::ADD_URL, sp::ADD_URL_SELECTED),
+                (AddDir, sp::ADD_DIR, sp::ADD_DIR_SELECTED),
+                (AddFile, sp::ADD_FILE, sp::ADD_FILE_PRESSED),
+            ],
+            sp::ADD_BAR,
+        ),
+        PlControl::Remove => (
+            &[
+                (RemoveAll, sp::REMOVE_ALL, sp::REMOVE_ALL_SELECTED),
+                (Crop, sp::REMOVE_CROP, sp::REMOVE_CROP_SELECTED),
+                (
+                    RemoveSelected,
+                    sp::REMOVE_SELECTED,
+                    sp::REMOVE_SELECTED_PRESSED,
+                ),
+                (RemoveMisc, sp::REMOVE_MISC, sp::REMOVE_MISC_SELECTED),
+            ],
+            sp::REMOVE_BAR,
+        ),
+        PlControl::Select => (
+            &[
+                (
+                    InvertSelection,
+                    sp::SELECT_INVERT,
+                    sp::SELECT_INVERT_SELECTED,
+                ),
+                (SelectNone, sp::SELECT_NONE, sp::SELECT_NONE_SELECTED),
+                (SelectAll, sp::SELECT_ALL, sp::SELECT_ALL_PRESSED),
+            ],
+            sp::SELECT_BAR,
+        ),
+        PlControl::Misc => (
+            &[
+                (Sort, sp::MISC_SORT, sp::MISC_SORT_SELECTED),
+                (FileInfo, sp::MISC_INFO, sp::MISC_INFO_SELECTED),
+                (MiscOptions, sp::MISC_OPTIONS, sp::MISC_OPTIONS_PRESSED),
+            ],
+            sp::MISC_BAR,
+        ),
+        _ => (
+            &[
+                (NewList, sp::LIST_NEW, sp::LIST_NEW_SELECTED),
+                (SaveList, sp::LIST_SAVE, sp::LIST_SAVE_SELECTED),
+                (LoadList, sp::LOAD_LIST, sp::LOAD_LIST_PRESSED),
+            ],
+            sp::LIST_BAR,
+        ),
+    }
+}
+
+/// An open bottom-bar menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct BarMenu {
+    button: PlControl,
+    hover: Option<PlMenuItem>,
+    /// The item under the press that opened the menu.
+    start: Option<PlMenuItem>,
+    /// A release now chooses: the pointer left the starting item, or the opening click
+    /// ended and the menu stayed open.
+    armed: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlaylistAction {
     PlayEntry(EntryId),
     Remove(Vec<EntryId>),
     AddFiles,
+    /// ADD > DIR: pick a folder and add its audio files.
+    AddFolder,
+    /// ADD > URL: streams are not supported (no network access).
+    AddUrl,
+    /// REM > ALL and LIST > NEW.
+    Clear,
+    /// REM > MISC, MISC > SORT and MISC > OPTS open a popup menu.
+    RemoveMiscMenu,
+    SortMenu,
+    MiscMenu,
+    /// MISC > INFO: the selected track, else the current one.
+    FileInfo(EntryId),
+    SaveList,
+    LoadList,
     Close,
     ToggleShade,
     /// The window wants this (unscaled) size.
@@ -107,6 +211,7 @@ pub struct PlaylistWindow {
     resize: Option<(Point, i32, i32)>,
     last_click: Option<(EntryId, u64)>,
     rows: HashMap<(String, u32, u32), TextStrip>,
+    bar_menu: Option<BarMenu>,
     /// Bumped when entries or the current track change, for [`Self::render_hash`].
     revision: u64,
 }
@@ -153,6 +258,7 @@ impl PlaylistWindow {
             resize: None,
             last_click: None,
             rows: HashMap::new(),
+            bar_menu: None,
             revision: 0,
         }
     }
@@ -189,6 +295,7 @@ impl PlaylistWindow {
         crate::render::hash_of(&(
             (scale, self.w, self.h, self.shaded, self.focused),
             (self.revision, self.scroll, &self.selected, self.current),
+            self.bar_menu,
             (
                 format!("{:?}", self.now.state),
                 self.now.position.as_secs(),
@@ -237,7 +344,93 @@ impl PlaylistWindow {
     }
 
     pub fn is_interacting(&self) -> bool {
-        self.pressed.is_some() || self.scroll_drag.is_some() || self.resize.is_some()
+        self.pressed.is_some()
+            || self.scroll_drag.is_some()
+            || self.resize.is_some()
+            || self.bar_menu.is_some()
+    }
+
+    /// Closes an open bottom-bar menu (the window lost focus).
+    pub fn close_menu(&mut self) {
+        self.bar_menu = None;
+    }
+
+    /// Whether a bottom-bar button menu is open.
+    pub fn menu_open(&self) -> bool {
+        self.bar_menu.is_some()
+    }
+
+    /// Where each item of `button`'s menu is drawn: stacked upward so the last item covers
+    /// the button.
+    fn bar_menu_layout(&self, button: PlControl) -> Vec<(PlMenuItem, Rect, Sprite, Sprite)> {
+        let r = self.control_rect(button);
+        let (items, _) = bar_menu_items(button);
+        let n = items.len() as i32;
+        items
+            .iter()
+            .enumerate()
+            .map(|(i, (item, normal, selected))| {
+                let y = r.y - (n - 1 - i as i32) * 18;
+                (*item, Rect::new(r.x, y, 22, 18), *normal, *selected)
+            })
+            .collect()
+    }
+
+    fn bar_menu_item_at(&self, button: PlControl, p: Point) -> Option<PlMenuItem> {
+        self.bar_menu_layout(button)
+            .into_iter()
+            .find(|(_, r, _, _)| Self::inside(*r, p))
+            .map(|(item, ..)| item)
+    }
+
+    /// Does a menu item: selection changes here, the rest as actions.
+    fn bar_menu_choice(&mut self, item: PlMenuItem) -> Vec<PlaylistAction> {
+        use PlMenuItem::*;
+        let unselected = || {
+            self.entries
+                .iter()
+                .filter(|e| !self.selected.contains(&e.id))
+                .map(|e| e.id)
+                .collect::<Vec<_>>()
+        };
+        let action = match item {
+            AddUrl => PlaylistAction::AddUrl,
+            AddDir => PlaylistAction::AddFolder,
+            AddFile => PlaylistAction::AddFiles,
+            RemoveAll | NewList => PlaylistAction::Clear,
+            Crop => PlaylistAction::Remove(unselected()),
+            RemoveSelected => PlaylistAction::Remove(self.selected()),
+            RemoveMisc => PlaylistAction::RemoveMiscMenu,
+            InvertSelection => {
+                self.selected = unselected().into_iter().collect();
+                return Vec::new();
+            }
+            SelectNone => {
+                self.selected.clear();
+                return Vec::new();
+            }
+            SelectAll => {
+                self.selected = self.entries.iter().map(|e| e.id).collect();
+                return Vec::new();
+            }
+            Sort => PlaylistAction::SortMenu,
+            FileInfo => {
+                let target = self
+                    .selected()
+                    .first()
+                    .copied()
+                    .or(self.current)
+                    .or(self.entries.first().map(|e| e.id));
+                match target {
+                    Some(id) => PlaylistAction::FileInfo(id),
+                    None => return Vec::new(),
+                }
+            }
+            MiscOptions => PlaylistAction::MiscMenu,
+            SaveList => PlaylistAction::SaveList,
+            LoadList => PlaylistAction::LoadList,
+        };
+        vec![action]
     }
 
     fn index_of(&self, id: EntryId) -> Option<usize> {
@@ -349,6 +542,23 @@ impl PlaylistWindow {
             }
             return (PlDown::DragWindow, Vec::new());
         }
+        if let Some(menu) = self.bar_menu {
+            // A press on an item arms it; anywhere else closes the menu.
+            return match self.bar_menu_item_at(menu.button, p) {
+                Some(item) => {
+                    self.bar_menu = Some(BarMenu {
+                        hover: Some(item),
+                        armed: true,
+                        ..menu
+                    });
+                    (PlDown::Control(menu.button), Vec::new())
+                }
+                None => {
+                    self.bar_menu = None;
+                    (PlDown::Control(PlControl::List), Vec::new())
+                }
+            };
+        }
         let Some(control) = self.hit_test(p) else {
             return if p.y < TOP {
                 (PlDown::DragWindow, Vec::new())
@@ -370,6 +580,19 @@ impl PlaylistWindow {
                 }
             }
             PlControl::Resize => self.resize = Some((p, self.w, self.h)),
+            PlControl::Add
+            | PlControl::Remove
+            | PlControl::Select
+            | PlControl::Misc
+            | PlControl::ListMenu => {
+                let item = self.bar_menu_item_at(control, p);
+                self.bar_menu = Some(BarMenu {
+                    button: control,
+                    hover: item,
+                    start: item,
+                    armed: false,
+                });
+            }
             _ => self.pressed = Some((control, true)),
         }
         (PlDown::Control(control), actions)
@@ -436,11 +659,31 @@ impl PlaylistWindow {
         if let Some((c, _)) = self.pressed {
             self.pressed = Some((c, Self::inside(self.control_rect(c), p)));
         }
+        if let Some(mut menu) = self.bar_menu {
+            menu.hover = self.bar_menu_item_at(menu.button, p);
+            menu.armed |= menu.hover != menu.start;
+            self.bar_menu = Some(menu);
+        }
         Vec::new()
     }
 
     pub fn pointer_up(&mut self, p: Point) -> Vec<PlaylistAction> {
         self.scroll_drag = None;
+        if let Some(menu) = self.bar_menu {
+            if !menu.armed {
+                // The opening click ended where it began: keep the menu open.
+                self.bar_menu = Some(BarMenu {
+                    armed: true,
+                    ..menu
+                });
+                return Vec::new();
+            }
+            self.bar_menu = None;
+            return match self.bar_menu_item_at(menu.button, p) {
+                Some(item) => self.bar_menu_choice(item),
+                None => Vec::new(),
+            };
+        }
         if self.resize.take().is_some() {
             return Vec::new();
         }
@@ -453,23 +696,16 @@ impl PlaylistWindow {
         let action = match control {
             PlControl::Close => PlaylistAction::Close,
             PlControl::Shade => PlaylistAction::ToggleShade,
-            PlControl::Add => PlaylistAction::AddFiles,
-            PlControl::Remove => PlaylistAction::Remove(self.selected()),
-            PlControl::Select => {
-                if self.selected.len() == self.entries.len() {
-                    self.selected.clear();
-                } else {
-                    self.selected = self.entries.iter().map(|e| e.id).collect();
-                }
-                return Vec::new();
-            }
             PlControl::Previous => PlaylistAction::Transport(Action::Previous),
             PlControl::Play => PlaylistAction::Transport(Action::Play),
             PlControl::Pause => PlaylistAction::Transport(Action::Pause),
             PlControl::Stop => PlaylistAction::Transport(Action::Stop),
             PlControl::Next => PlaylistAction::Transport(Action::Next),
             PlControl::Eject => PlaylistAction::Transport(Action::Eject),
-            PlControl::Misc
+            PlControl::Add
+            | PlControl::Remove
+            | PlControl::Select
+            | PlControl::Misc
             | PlControl::ListMenu
             | PlControl::Resize
             | PlControl::Scrollbar
@@ -495,6 +731,13 @@ impl PlaylistWindow {
         const END: u32 = 0xff57;
         const RETURN: u32 = 0xff0d;
         const DELETE: u32 = 0xffff;
+        const ESCAPE: u32 = 0xff1b;
+        if self.bar_menu.is_some() {
+            if keysym == ESCAPE {
+                self.bar_menu = None;
+            }
+            return Vec::new();
+        }
         let len = self.entries.len();
         if len == 0 {
             return Vec::new();
@@ -630,18 +873,6 @@ impl PlaylistWindow {
         }
         draw(&mut b, sp::BOTTOM_LEFT, 0, h - BOTTOM);
         draw(&mut b, sp::BOTTOM_RIGHT, w - 150, h - BOTTOM);
-        for (c, pressed) in [
-            (PlControl::Add, sp::ADD_FILE_PRESSED),
-            (PlControl::Remove, sp::REMOVE_SELECTED_PRESSED),
-            (PlControl::Select, sp::SELECT_ALL_PRESSED),
-            (PlControl::Misc, sp::MISC_OPTIONS_PRESSED),
-            (PlControl::ListMenu, sp::LOAD_LIST_PRESSED),
-        ] {
-            if self.pressed_on(c) {
-                let r = self.control_rect(c);
-                draw(&mut b, pressed, r.x, r.y);
-            }
-        }
 
         // Scroll handle.
         draw(
@@ -728,7 +959,39 @@ impl PlaylistWindow {
         for (title, duration, y) in late {
             Self::draw_row(&mut out, &title, &duration, list, y * s, s);
         }
+        self.render_bar_menu(skin, &mut out, s);
         out
+    }
+
+    /// Draws the open bottom-bar menu over everything (the list text included), at `scale`.
+    fn render_bar_menu(&self, skin: &Skin, out: &mut Bitmap, scale: i32) {
+        let Some(menu) = self.bar_menu else { return };
+        let layout = self.bar_menu_layout(menu.button);
+        let Some((_, top, _, _)) = layout.first().copied() else {
+            return;
+        };
+        let (_, bar) = bar_menu_items(menu.button);
+        // Drawn unscaled into its own bitmap (bar on the left), then scaled into place.
+        let height = layout.len() as i32 * 18;
+        let mut m = Bitmap::new(25, height as u32, 0xFF00_0000);
+        skin.draw(&mut m, bar, 0, 0);
+        for (item, r, normal, selected) in layout {
+            let sprite = if menu.hover == Some(item) {
+                selected
+            } else {
+                normal
+            };
+            skin.draw(&mut m, sprite, 3, r.y - top.y);
+        }
+        let big = crate::render::scale_nearest(&m, scale as u32);
+        let (x0, y0) = ((top.x - 3) * scale, top.y * scale);
+        for y in 0..big.height() as i32 {
+            for x in 0..big.width() as i32 {
+                if let Some(p) = big.get(x, y) {
+                    out.set(x0 + x, y0 + y, p);
+                }
+            }
+        }
     }
 
     /// The shade bar: current track title and time, with close and unshade buttons.
@@ -941,8 +1204,6 @@ mod tests {
             Point::new(r.x + r.w / 2, r.y + r.h / 2)
         };
         for (c, expected) in [
-            (PlControl::Remove, PlaylistAction::Remove(vec![1])),
-            (PlControl::Add, PlaylistAction::AddFiles),
             (PlControl::Close, PlaylistAction::Close),
             (PlControl::Play, PlaylistAction::Transport(Action::Play)),
             (PlControl::Eject, PlaylistAction::Transport(Action::Eject)),
@@ -951,10 +1212,178 @@ mod tests {
             assert_eq!(w.pointer_down(p, NONE, 0).0, PlDown::Control(c), "{c:?}");
             assert_eq!(w.pointer_up(p), vec![expected], "{c:?}");
         }
-        let p = center(&w, PlControl::Select);
+    }
+
+    fn item_point(w: &PlaylistWindow, button: PlControl, item: PlMenuItem) -> Point {
+        let (_, r, _, _) = w
+            .bar_menu_layout(button)
+            .into_iter()
+            .find(|(i, ..)| *i == item)
+            .unwrap();
+        Point::new(r.x + r.w / 2, r.y + r.h / 2)
+    }
+
+    /// Click a bottom-bar button (menu stays open), then click an item.
+    fn choose(w: &mut PlaylistWindow, button: PlControl, item: PlMenuItem) -> Vec<PlaylistAction> {
+        let r = w.control_rect(button);
+        let b = Point::new(r.x + 5, r.y + 5);
+        w.pointer_down(b, NONE, 0);
+        assert!(w.pointer_up(b).is_empty(), "the opening click only opens");
+        assert!(w.menu_open());
+        let p = item_point(w, button, item);
         w.pointer_down(p, NONE, 0);
-        w.pointer_up(p);
+        let actions = w.pointer_up(p);
+        assert!(!w.menu_open());
+        actions
+    }
+
+    #[test]
+    fn bar_menus_stack_items_over_their_button() {
+        let w = window(1);
+        let add = w.control_rect(PlControl::Add);
+        let layout = w.bar_menu_layout(PlControl::Add);
+        let rects: Vec<Rect> = layout.iter().map(|(_, r, ..)| *r).collect();
+        assert_eq!(
+            rects,
+            vec![
+                Rect::new(add.x, add.y - 36, 22, 18),
+                Rect::new(add.x, add.y - 18, 22, 18),
+                Rect::new(add.x, add.y, 22, 18),
+            ]
+        );
+        assert_eq!(w.bar_menu_layout(PlControl::Remove).len(), 4);
+        let top = w.bar_menu_layout(PlControl::Remove)[0].1;
+        assert!(top.y >= TOP, "fits at the smallest height");
+    }
+
+    #[test]
+    fn bar_menu_items_become_actions() {
+        use PlMenuItem::*;
+        let mut w = window(4);
+        assert_eq!(
+            choose(&mut w, PlControl::Add, AddFile),
+            vec![PlaylistAction::AddFiles]
+        );
+        assert_eq!(
+            choose(&mut w, PlControl::Add, AddDir),
+            vec![PlaylistAction::AddFolder]
+        );
+        assert_eq!(
+            choose(&mut w, PlControl::Add, AddUrl),
+            vec![PlaylistAction::AddUrl]
+        );
+        assert_eq!(
+            choose(&mut w, PlControl::Remove, RemoveAll),
+            vec![PlaylistAction::Clear]
+        );
+        assert_eq!(
+            choose(&mut w, PlControl::ListMenu, NewList),
+            vec![PlaylistAction::Clear]
+        );
+        assert_eq!(
+            choose(&mut w, PlControl::ListMenu, SaveList),
+            vec![PlaylistAction::SaveList]
+        );
+        assert_eq!(
+            choose(&mut w, PlControl::ListMenu, LoadList),
+            vec![PlaylistAction::LoadList]
+        );
+        assert_eq!(
+            choose(&mut w, PlControl::Remove, RemoveMisc),
+            vec![PlaylistAction::RemoveMiscMenu]
+        );
+        assert_eq!(
+            choose(&mut w, PlControl::Misc, Sort),
+            vec![PlaylistAction::SortMenu]
+        );
+        assert_eq!(
+            choose(&mut w, PlControl::Misc, MiscOptions),
+            vec![PlaylistAction::MiscMenu]
+        );
+        // File info: the first entry when nothing is selected or current.
+        assert_eq!(
+            choose(&mut w, PlControl::Misc, FileInfo),
+            vec![PlaylistAction::FileInfo(1)]
+        );
+        w.set_current(Some(3));
+        assert_eq!(
+            choose(&mut w, PlControl::Misc, FileInfo),
+            vec![PlaylistAction::FileInfo(3)]
+        );
+    }
+
+    #[test]
+    fn selection_and_removal_items() {
+        use PlMenuItem::*;
+        let mut w = window(4);
+        w.pointer_down(row_point(&w, 1), NONE, 0);
+        w.pointer_up(row_point(&w, 1));
+        assert_eq!(w.selected(), vec![2]);
+        assert!(choose(&mut w, PlControl::Select, InvertSelection).is_empty());
+        assert_eq!(w.selected(), vec![1, 3, 4]);
+        assert_eq!(
+            choose(&mut w, PlControl::Misc, FileInfo),
+            vec![PlaylistAction::FileInfo(1)]
+        );
+        assert_eq!(
+            choose(&mut w, PlControl::Remove, RemoveSelected),
+            vec![PlaylistAction::Remove(vec![1, 3, 4])]
+        );
+        assert_eq!(
+            choose(&mut w, PlControl::Remove, Crop),
+            vec![PlaylistAction::Remove(vec![2])]
+        );
+        choose(&mut w, PlControl::Select, SelectNone);
+        assert!(w.selected().is_empty());
+        choose(&mut w, PlControl::Select, SelectAll);
         assert_eq!(w.selected(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn bar_menu_drag_release_and_dismissal() {
+        let mut w = window(2);
+        // Press on ADD, drag up to DIR, release: chosen in one gesture.
+        let r = w.control_rect(PlControl::Add);
+        w.pointer_down(Point::new(r.x + 5, r.y + 5), NONE, 0);
+        assert!(w.is_interacting());
+        let dir = item_point(&w, PlControl::Add, PlMenuItem::AddDir);
+        w.pointer_move(dir);
+        assert_eq!(w.pointer_up(dir), vec![PlaylistAction::AddFolder]);
+        // Released outside after dragging: closes without acting.
+        w.pointer_down(Point::new(r.x + 5, r.y + 5), NONE, 0);
+        w.pointer_move(Point::new(200, 60));
+        assert!(w.pointer_up(Point::new(200, 60)).is_empty());
+        assert!(!w.menu_open());
+        // Open by click, then a press elsewhere closes it and does nothing else.
+        w.pointer_down(Point::new(r.x + 5, r.y + 5), NONE, 0);
+        w.pointer_up(Point::new(r.x + 5, r.y + 5));
+        let row = row_point(&w, 0);
+        w.pointer_down(row, NONE, 0);
+        assert!(!w.menu_open());
+        assert!(w.selected().is_empty(), "the closing click does not select");
+        // Escape closes too.
+        w.pointer_down(Point::new(r.x + 5, r.y + 5), NONE, 0);
+        w.pointer_up(Point::new(r.x + 5, r.y + 5));
+        w.key(0xff1b, NONE);
+        assert!(!w.menu_open());
+    }
+
+    #[test]
+    fn bar_menu_renders_items_and_highlight() {
+        let skin = coded_skin();
+        let mut w = window(2);
+        let r = w.control_rect(PlControl::Select);
+        let hash = w.render_hash(1, 0);
+        w.pointer_down(Point::new(r.x + 5, r.y + 5), NONE, 0);
+        assert_ne!(w.render_hash(1, 0), hash);
+        let b = w.render(&skin, &mut NoFallback, 0, 1);
+        // Bottom item (ALL) highlighted under the pointer, INV above it normal, bar beside.
+        assert_eq!(b.get(r.x, r.y), Some(code(Sheet::Pledit, 127, 149)));
+        assert_eq!(b.get(r.x, r.y - 36), Some(code(Sheet::Pledit, 104, 111)));
+        assert_eq!(
+            b.get(r.x - 3, r.y - 36),
+            Some(code(Sheet::Pledit, 150, 111))
+        );
     }
 
     #[test]

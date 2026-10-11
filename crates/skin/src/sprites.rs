@@ -271,16 +271,45 @@ pub mod playlist {
     pub const SCROLL_HANDLE_PRESSED: Sprite = s(Pledit, 61, 53, 8, 18);
     pub const CLOSE_PRESSED: Sprite = s(Pledit, 52, 42, 9, 9);
     pub const SHADE_PRESSED: Sprite = s(Pledit, 62, 42, 9, 9);
+    // Bottom-bar button menus: each item normal and selected (23 px to the right), stacked
+    // upward from the button, with a 3 px bar on their left.
+    pub const ADD_URL: Sprite = s(Pledit, 0, 111, 22, 18);
+    pub const ADD_URL_SELECTED: Sprite = s(Pledit, 23, 111, 22, 18);
+    pub const ADD_DIR: Sprite = s(Pledit, 0, 130, 22, 18);
+    pub const ADD_DIR_SELECTED: Sprite = s(Pledit, 23, 130, 22, 18);
     pub const ADD_FILE: Sprite = s(Pledit, 0, 149, 22, 18);
     pub const ADD_FILE_PRESSED: Sprite = s(Pledit, 23, 149, 22, 18);
+    pub const ADD_BAR: Sprite = s(Pledit, 48, 111, 3, 54);
+    pub const REMOVE_ALL: Sprite = s(Pledit, 54, 111, 22, 18);
+    pub const REMOVE_ALL_SELECTED: Sprite = s(Pledit, 77, 111, 22, 18);
+    pub const REMOVE_CROP: Sprite = s(Pledit, 54, 130, 22, 18);
+    pub const REMOVE_CROP_SELECTED: Sprite = s(Pledit, 77, 130, 22, 18);
     pub const REMOVE_SELECTED: Sprite = s(Pledit, 54, 149, 22, 18);
     pub const REMOVE_SELECTED_PRESSED: Sprite = s(Pledit, 77, 149, 22, 18);
+    pub const REMOVE_MISC: Sprite = s(Pledit, 54, 168, 22, 18);
+    pub const REMOVE_MISC_SELECTED: Sprite = s(Pledit, 77, 168, 22, 18);
+    pub const REMOVE_BAR: Sprite = s(Pledit, 100, 111, 3, 72);
+    pub const SELECT_INVERT: Sprite = s(Pledit, 104, 111, 22, 18);
+    pub const SELECT_INVERT_SELECTED: Sprite = s(Pledit, 127, 111, 22, 18);
+    pub const SELECT_NONE: Sprite = s(Pledit, 104, 130, 22, 18);
+    pub const SELECT_NONE_SELECTED: Sprite = s(Pledit, 127, 130, 22, 18);
     pub const SELECT_ALL: Sprite = s(Pledit, 104, 149, 22, 18);
     pub const SELECT_ALL_PRESSED: Sprite = s(Pledit, 127, 149, 22, 18);
+    pub const SELECT_BAR: Sprite = s(Pledit, 150, 111, 3, 54);
+    pub const MISC_SORT: Sprite = s(Pledit, 154, 111, 22, 18);
+    pub const MISC_SORT_SELECTED: Sprite = s(Pledit, 177, 111, 22, 18);
+    pub const MISC_INFO: Sprite = s(Pledit, 154, 130, 22, 18);
+    pub const MISC_INFO_SELECTED: Sprite = s(Pledit, 177, 130, 22, 18);
     pub const MISC_OPTIONS: Sprite = s(Pledit, 154, 149, 22, 18);
     pub const MISC_OPTIONS_PRESSED: Sprite = s(Pledit, 177, 149, 22, 18);
+    pub const MISC_BAR: Sprite = s(Pledit, 200, 111, 3, 54);
+    pub const LIST_NEW: Sprite = s(Pledit, 204, 111, 22, 18);
+    pub const LIST_NEW_SELECTED: Sprite = s(Pledit, 227, 111, 22, 18);
+    pub const LIST_SAVE: Sprite = s(Pledit, 204, 130, 22, 18);
+    pub const LIST_SAVE_SELECTED: Sprite = s(Pledit, 227, 130, 22, 18);
     pub const LOAD_LIST: Sprite = s(Pledit, 204, 149, 22, 18);
     pub const LOAD_LIST_PRESSED: Sprite = s(Pledit, 227, 149, 22, 18);
+    pub const LIST_BAR: Sprite = s(Pledit, 250, 111, 3, 54);
     pub const SHADE_LEFT: Sprite = s(Pledit, 72, 42, 25, 14);
     pub const SHADE_TILE: Sprite = s(Pledit, 72, 57, 25, 14);
     pub const SHADE_RIGHT: Sprite = s(Pledit, 99, 57, 50, 14);
@@ -306,16 +335,43 @@ pub mod playlist {
         SCROLL_HANDLE_PRESSED,
         CLOSE_PRESSED,
         SHADE_PRESSED,
+        ADD_URL,
+        ADD_URL_SELECTED,
+        ADD_DIR,
+        ADD_DIR_SELECTED,
         ADD_FILE,
         ADD_FILE_PRESSED,
+        ADD_BAR,
+        REMOVE_ALL,
+        REMOVE_ALL_SELECTED,
+        REMOVE_CROP,
+        REMOVE_CROP_SELECTED,
         REMOVE_SELECTED,
         REMOVE_SELECTED_PRESSED,
+        REMOVE_MISC,
+        REMOVE_MISC_SELECTED,
+        REMOVE_BAR,
+        SELECT_INVERT,
+        SELECT_INVERT_SELECTED,
+        SELECT_NONE,
+        SELECT_NONE_SELECTED,
         SELECT_ALL,
         SELECT_ALL_PRESSED,
+        SELECT_BAR,
+        MISC_SORT,
+        MISC_SORT_SELECTED,
+        MISC_INFO,
+        MISC_INFO_SELECTED,
         MISC_OPTIONS,
         MISC_OPTIONS_PRESSED,
+        MISC_BAR,
+        LIST_NEW,
+        LIST_NEW_SELECTED,
+        LIST_SAVE,
+        LIST_SAVE_SELECTED,
         LOAD_LIST,
         LOAD_LIST_PRESSED,
+        LIST_BAR,
     ];
 }
 

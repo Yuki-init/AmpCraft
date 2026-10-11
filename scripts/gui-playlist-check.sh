@@ -38,7 +38,8 @@ shot 2-eq
 xdotool mousemove 200 "$(row 2)" click --repeat 2 --delay 120 1; sleep 1
 shot 3-dblclick-row3
 click 200 "$(row 0)" 0.2      # select first row
-click 154 $((PLY + 232 - 21)) 0.6   # REM
+click 154 $((PLY + 232 - 21)) 0.4   # REM opens its menu
+click 154 $((PLY + 232 - 21 - 18)) 0.6   # REM SEL: remove the selection
 shot 4-removed
 xdotool mousemove 365 $((PLY + 222)) mousedown 1; sleep 0.1
 xdotool mousemove 390 $((PLY + 250)); sleep 0.1

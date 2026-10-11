@@ -95,6 +95,10 @@ enum PickMode {
     Replace,
     /// Playlist ADD: append.
     Append,
+    /// Playlist LIST > LOAD: replace the playlist with a playlist file's entries.
+    LoadList,
+    /// Playlist LIST > SAVE: write the playlist there.
+    SaveList,
 }
 
 struct Win {
@@ -163,6 +167,8 @@ struct App {
     picks: (Sender<Vec<PathBuf>>, Receiver<Vec<PathBuf>>),
     pick_mode: Option<PickMode>,
     last_dir: Option<PathBuf>,
+    /// Folder of the last loaded or saved playlist file.
+    playlist_dir: Option<PathBuf>,
     dirs: AppDirs,
     last_status: Status,
     analyzer: AnalyzerReader,
@@ -445,6 +451,14 @@ impl App {
         if paths.is_empty() {
             return Ok(());
         }
+        match mode {
+            Some(PickMode::LoadList) => return self.load_playlist(&paths[0]),
+            Some(PickMode::SaveList) => {
+                self.save_playlist(paths[0].clone());
+                return Ok(());
+            }
+            _ => {}
+        }
         self.last_dir = paths[0].parent().map(PathBuf::from);
         let files = amp_app::files::expand(&paths);
         match mode {
@@ -461,6 +475,38 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Replaces the playlist with a playlist file's entries (playback is left alone).
+    fn load_playlist(&mut self, file: &std::path::Path) -> Result<()> {
+        self.playlist_dir = file.parent().map(PathBuf::from);
+        match amp_library::playlist::read_playlist(file) {
+            Ok(paths) => {
+                self.player.with_queue(|q| q.clear());
+                self.player.enqueue(paths);
+            }
+            Err(e) => {
+                let msg = format!("Cannot read {}: {e}", file.display());
+                amp_app::dialog::show_message("Load playlist", move || msg);
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes the playlist as extended M3U; `.m3u8` is added unless it ends in .m3u/.m3u8.
+    fn save_playlist(&mut self, mut file: PathBuf) {
+        let ext = file
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        if !matches!(ext.as_deref(), Some("m3u" | "m3u8")) {
+            file.as_mut_os_string().push(".m3u8");
+        }
+        self.playlist_dir = file.parent().map(PathBuf::from);
+        if let Err(e) = amp_library::playlist::save_m3u(&file, &self.playlist_items()) {
+            let msg = format!("Cannot save {}: {e}", file.display());
+            amp_app::dialog::show_message("Save playlist", move || msg);
+        }
     }
 
     fn act(&mut self, action: Action) -> Result<()> {
@@ -540,8 +586,71 @@ impl App {
                 self.sync_windows()?;
             }
             PlaylistAction::Transport(a) => self.act(a)?,
+            PlaylistAction::AddFolder => {
+                if self.pick_mode.is_none() {
+                    let start = self.last_dir.clone().or_else(|| self.dirs.music.clone());
+                    if amp_app::dialog::pick_folder(start, self.picks.0.clone()) {
+                        self.pick_mode = Some(PickMode::Append);
+                    }
+                }
+            }
+            PlaylistAction::AddUrl => {
+                amp_app::dialog::show_message("Add URL", || {
+                    "Streams are not supported: OpenAMP plays local files only.".into()
+                });
+            }
+            PlaylistAction::Clear => self.player.with_queue(|q| q.clear()),
+            PlaylistAction::RemoveMiscMenu => self.open_menu_here(MenuKind::PlaylistRemove)?,
+            PlaylistAction::SortMenu => self.open_menu_here(MenuKind::PlaylistSort)?,
+            PlaylistAction::MiscMenu => self.open_menu_here(MenuKind::PlaylistMisc)?,
+            PlaylistAction::FileInfo(id) => {
+                if let Some(path) = self
+                    .player
+                    .with_queue(|q| q.get(id).map(|e| e.path.clone()))
+                {
+                    self.show_file_info_for(path);
+                }
+            }
+            PlaylistAction::LoadList => self.playlist_dialog(PickMode::LoadList),
+            PlaylistAction::SaveList => self.playlist_dialog(PickMode::SaveList),
         }
         Ok(())
+    }
+
+    /// Opens a menu at the pointer, after a click (no button held).
+    fn open_menu_here(&mut self, kind: MenuKind) -> Result<()> {
+        let at = self.platform.pointer()?;
+        self.open_menu(kind, at, true)
+    }
+
+    fn playlist_dialog(&mut self, mode: PickMode) {
+        if self.pick_mode.is_some() {
+            return;
+        }
+        let start = self
+            .playlist_dir
+            .clone()
+            .or_else(|| self.dirs.music.clone());
+        let tx = self.picks.0.clone();
+        let started = match mode {
+            PickMode::SaveList => amp_app::dialog::pick_playlist_save(start, tx),
+            _ => amp_app::dialog::pick_playlist(start, tx),
+        };
+        if started {
+            self.pick_mode = Some(mode);
+        }
+    }
+
+    /// The playlist as M3U items, with the titles and lengths known so far.
+    fn playlist_items(&self) -> Vec<amp_library::playlist::PlaylistItem> {
+        self.queue_cache
+            .iter()
+            .map(|(id, path)| amp_library::playlist::PlaylistItem {
+                path: path.clone(),
+                title: self.meta.get(id).and_then(|m| m.title.clone()),
+                duration: self.meta.get(id).and_then(|m| m.duration),
+            })
+            .collect()
     }
 
     fn act_eq(&mut self, action: EqAction) -> Result<()> {
@@ -737,14 +846,7 @@ impl App {
                 Err(e) => log::warn!("{e}"),
             }
         }
-        let items: Vec<amp_library::playlist::PlaylistItem> = queued
-            .iter()
-            .map(|(id, path)| amp_library::playlist::PlaylistItem {
-                path: path.clone(),
-                title: self.meta.get(id).and_then(|m| m.title.clone()),
-                duration: self.meta.get(id).and_then(|m| m.duration),
-            })
-            .collect();
+        let items = self.playlist_items();
         let text = amp_library::playlist::write_m3u(&items);
         if text != self.saved_playlist {
             match amp_library::playlist::save_m3u(&self.playlist_file, &items) {
@@ -1267,7 +1369,12 @@ impl App {
                     Some(MAIN) => self.main.focused = focused,
                     Some(EQ) => self.eq.focused = focused,
                     Some(LIB) => self.lib.focused = focused,
-                    Some(_) => self.pl.focused = focused,
+                    Some(_) => {
+                        self.pl.focused = focused;
+                        if !focused {
+                            self.pl.close_menu();
+                        }
+                    }
                     None => {}
                 }
                 if focused {
@@ -1685,6 +1792,7 @@ fn main() -> Result<()> {
         picks: mpsc::channel(),
         pick_mode: None,
         last_dir,
+        playlist_dir: None,
         dirs,
         last_status: Status {
             state: PlaybackState::Stopped,
