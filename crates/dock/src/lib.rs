@@ -1,14 +1,12 @@
 //! Docking math: panel graph, edge snapping and group drag. Pure, no I/O.
+//!
+//! The platform layer reports pointer positions and screen work areas; this crate decides
+//! where every panel goes. See [`Layout`] for the classic rules it implements.
 
-/// Name of this crate, used in diagnostics.
-pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
+pub mod geom;
+pub mod layout;
+pub mod snap;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn crate_name_is_set() {
-        assert_eq!(CRATE_NAME, "amp-dock");
-    }
-}
+pub use geom::{Point, Rect, Side, Size, attached_side};
+pub use layout::{Drag, Layout, PanelId};
+pub use snap::{DEFAULT_SNAP_DISTANCE, snap_offset};
