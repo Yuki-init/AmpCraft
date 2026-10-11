@@ -2,7 +2,7 @@
 
 A cross-platform reimplementation of the classic 2.x era skinnable audio player, written in Rust with FFmpeg as the decoding backend. It loads classic `.wsz` skins. Linux on X11 / XWayland is the first target.
 
-Status: playable on Linux (X11 and XWayland): main window, playlist, equalizer with presets, media library, preferences, built-in themes, MPRIS and media keys. Windows and macOS backends are not written yet. Design choices are recorded in `docs/DECISIONS.md` and the development log in `docs/OVERNIGHT.md`.
+Status: playable on Linux (X11 and XWayland): main window, playlist, equalizer with presets, media library, preferences, built-in themes, MPRIS and media keys. Windows and macOS backends are not written yet.
 
 Builds and tests run in a Podman container (see Building); nothing needs installing on the host except Podman.
 

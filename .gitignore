@@ -17,6 +17,9 @@ perf.data*
 .env
 .env.*
 
+# Development notes (kept locally, not published)
+/docs/
+
 # AI assistant files (kept locally, not published)
 /CLAUDE.md
 /AGENTS.md

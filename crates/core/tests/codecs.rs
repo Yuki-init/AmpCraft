@@ -249,7 +249,8 @@ fn gapless_opus() {
 
 #[test]
 fn vorbis_length_is_close() {
-    // libavcodec trims 128 frames too many from a final partial Vorbis block. See DECISIONS.md.
+    // libavcodec trims 128 frames too many from a final partial Vorbis block, so the length
+    // can come up short by that much.
     let dir = tempfile::tempdir().unwrap();
     let (_, wav) = source_wav(dir.path(), 30_011, 0, "v.wav");
     let Some(p) = ffmpeg_encode(&wav, &dir.path().join("v.ogg"), &["-c:a", "libvorbis"]) else {
@@ -260,7 +261,7 @@ fn vorbis_length_is_close() {
 }
 
 #[test]
-#[ignore = "known FFmpeg limitation: Vorbis end trim drops 128 frames at each join (DECISIONS.md)"]
+#[ignore = "known FFmpeg limitation: Vorbis end trim drops 128 frames at each join"]
 fn gapless_vorbis_strict() {
     gapless_case(Gapless {
         ext: "ogg",
