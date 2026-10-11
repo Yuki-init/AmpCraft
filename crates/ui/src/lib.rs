@@ -2,6 +2,7 @@
 
 pub mod dock_drag;
 pub mod eq_window;
+pub mod library_window;
 pub mod main_window;
 pub mod move_tracker;
 pub mod playlist_window;
@@ -11,6 +12,7 @@ pub mod vis;
 
 pub use dock_drag::{DockDrag, Moves};
 pub use eq_window::{EqAction, EqDown, EqWindow};
+pub use library_window::{LibAction, LibDown, LibraryRow, LibraryWindow, Selection};
 pub use main_window::{Action, Control, MainWindow, NowPlaying, PlayState, PointerDown};
 pub use move_tracker::MoveTracker;
 pub use playlist_window::{PlDown, PlaylistAction, PlaylistEntry, PlaylistWindow, SelectMods};

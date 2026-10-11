@@ -11,6 +11,7 @@ pub mod archive;
 pub mod bitmap;
 pub mod config;
 pub mod font;
+pub mod generic;
 pub mod region;
 pub mod sprites;
 

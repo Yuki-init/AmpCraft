@@ -32,6 +32,7 @@ fn base_skin_matches_sprite_maps() {
         .iter()
         .chain(sprites::playlist::ALL)
         .chain(sprites::eq::ALL)
+        .chain(amp_skin::generic::ALL)
     {
         let sheet = skin.sheet(s.sheet).unwrap();
         assert!(sheet.contains_rect(s.rect), "{s:?} outside {sheet:?}");
@@ -44,6 +45,10 @@ fn base_skin_matches_sprite_maps() {
     // glyph grid in the top 18 rows.
     let text = skin.sheet(Sheet::Text).unwrap();
     assert!(text.width() >= 155 && text.height() >= 18);
+    let letters = amp_skin::generic::GenLetters::scan(skin.sheet(Sheet::Gen).unwrap());
+    assert_eq!(letters.len(), 26, "A-Z title letters in GEN.BMP");
+    let colors = amp_skin::generic::GenExColors::from_skin(&skin);
+    eprintln!("genex: {colors:?}");
     // Its region.txt is documentation only: every block is commented out.
     assert!(skin.regions().normal.is_empty());
 }

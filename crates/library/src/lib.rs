@@ -123,6 +123,17 @@ pub struct ScanReport {
     pub unreadable: usize,
 }
 
+/// Narrows a track listing. Unset parts match everything.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Filter {
+    /// Album artist, or artist for tracks without one.
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub genre: Option<String>,
+    /// Text searched in title, artist, album and path.
+    pub text: String,
+}
+
 /// Overall counts.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Stats {
@@ -405,18 +416,68 @@ impl Library {
     /// Tracks whose title, artist, album or path contains `text` (case-insensitive for ASCII),
     /// in album order. An empty query lists everything.
     pub fn search(&self, text: &str, limit: usize) -> Result<Vec<Track>> {
-        let pattern = format!("%{}%", like_escape(text.trim()));
+        self.tracks(
+            &Filter {
+                text: text.to_owned(),
+                ..Filter::default()
+            },
+            limit,
+        )
+    }
+
+    /// Tracks matching every set part of `filter`, in album order.
+    pub fn tracks(&self, filter: &Filter, limit: usize) -> Result<Vec<Track>> {
+        let pattern = format!("%{}%", like_escape(filter.text.trim()));
         let sql = format!(
             "SELECT {TRACK_COLUMNS} FROM tracks
-             WHERE title LIKE ?1 ESCAPE '\\' OR artist LIKE ?1 ESCAPE '\\'
-                OR album LIKE ?1 ESCAPE '\\' OR album_artist LIKE ?1 ESCAPE '\\'
-                OR path LIKE ?1 ESCAPE '\\'
+             WHERE (title LIKE ?1 ESCAPE '\\' OR artist LIKE ?1 ESCAPE '\\'
+                    OR album LIKE ?1 ESCAPE '\\' OR album_artist LIKE ?1 ESCAPE '\\'
+                    OR path LIKE ?1 ESCAPE '\\')
+               AND (?2 IS NULL OR COALESCE(album_artist, artist) = ?2 OR artist = ?2)
+               AND (?3 IS NULL OR album = ?3)
+               AND (?4 IS NULL OR genre = ?4)
              ORDER BY COALESCE(album_artist, artist), album, disc, track, path
-             LIMIT ?2"
+             LIMIT ?5"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![pattern, limit as i64], row_to_track)?;
+        let rows = stmt.query_map(
+            params![
+                pattern,
+                filter.artist,
+                filter.album,
+                filter.genre,
+                limit as i64
+            ],
+            row_to_track,
+        )?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Distinct values of a grouping with their track counts, sorted by name. Untagged tracks
+    /// are not listed.
+    fn grouped(&self, expr: &str) -> Result<Vec<(String, u64)>> {
+        let sql = format!(
+            "SELECT {expr} AS v, COUNT(*) FROM tracks WHERE v IS NOT NULL AND v != ''
+             GROUP BY v ORDER BY v COLLATE NOCASE"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Album artists (or artists for tracks without one) and their track counts.
+    pub fn artists(&self) -> Result<Vec<(String, u64)>> {
+        self.grouped("COALESCE(album_artist, artist)")
+    }
+
+    pub fn albums(&self) -> Result<Vec<(String, u64)>> {
+        self.grouped("album")
+    }
+
+    pub fn genres(&self) -> Result<Vec<(String, u64)>> {
+        self.grouped("genre")
     }
 
     pub fn stats(&self) -> Result<Stats> {
@@ -579,6 +640,44 @@ mod tests {
         let s = lib.stats().unwrap();
         assert_eq!((s.tracks, s.artists, s.albums), (4, 1, 3));
         assert_eq!(s.total_duration, Duration::from_secs(400));
+    }
+
+    #[test]
+    fn groupings_and_filters() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        write(d, "Alpha/01 a.flac", b"1");
+        write(d, "Alpha/02 b.flac", b"2");
+        write(d, "beta/01 c.flac", b"3");
+        let mut lib = Library::open_in_memory().unwrap();
+        scan(&mut lib, &[d.to_path_buf()], &FakeTags::new());
+        assert_eq!(
+            lib.albums().unwrap(),
+            vec![("Alpha".into(), 2), ("beta".into(), 1)]
+        );
+        assert_eq!(lib.artists().unwrap(), vec![("Artist".into(), 3)]);
+        assert!(
+            lib.genres().unwrap().is_empty(),
+            "untagged genres are not listed"
+        );
+        let f = Filter {
+            album: Some("Alpha".into()),
+            text: "b".into(),
+            ..Filter::default()
+        };
+        let got: Vec<_> = lib
+            .tracks(&f, 10)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.tags.title.unwrap())
+            .collect();
+        assert_eq!(got, vec!["02 b"]);
+        let by_artist = Filter {
+            artist: Some("Artist".into()),
+            ..Filter::default()
+        };
+        assert_eq!(lib.tracks(&by_artist, 10).unwrap().len(), 3);
+        assert_eq!(lib.tracks(&by_artist, 2).unwrap().len(), 2, "limit applies");
     }
 
     #[test]
