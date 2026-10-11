@@ -20,13 +20,14 @@ use amp_library::{Filter, Library, View};
 use amp_platform::AppDirs;
 use amp_platform::x11::X11Platform;
 use amp_platform::{
-    Event, Modifiers, MouseButton, Platform, Point, Size, WindowId, WindowKind, WindowSpec, keys,
+    CursorShape, Event, Modifiers, MouseButton, Platform, Point, Size, WindowId, WindowKind,
+    WindowSpec, keys,
 };
 use amp_skin::{Bitmap, Skin};
 use amp_ui::main_window::{HEIGHT, WIDTH};
 use amp_ui::{
-    Action, AlbumRow, ArtistRow, DockDrag, EqAction, EqDown, EqWindow, LibAction, LibDown, LibView,
-    LibraryRow, LibraryWindow, MainWindow, MoveTracker, NowPlaying, PlDown, PlayState,
+    Action, AlbumRow, ArtistRow, DockDrag, EqAction, EqDown, EqWindow, Grip, LibAction, LibDown,
+    LibView, LibraryRow, LibraryWindow, MainWindow, MoveTracker, NowPlaying, PlDown, PlayState,
     PlaylistAction, PlaylistEntry, PlaylistWindow, PointerDown, SelectMods, VisMode,
 };
 use anyhow::{Context, Result};
@@ -1296,6 +1297,25 @@ impl App {
                 }
             }
             Event::Motion { window, local, .. } => {
+                // Resize arrows over the playlist's and library's edges.
+                if !self.drag.is_dragging()
+                    && let Some(panel @ (PL | LIB)) = self.panel_of(window)
+                    && !self.interacting(panel)
+                {
+                    let p = self.scaled(local);
+                    let grip = if panel == PL {
+                        self.pl.grip(p)
+                    } else {
+                        self.lib.grip(p)
+                    };
+                    let shape = match grip {
+                        Some(Grip::Right) => CursorShape::ResizeRight,
+                        Some(Grip::Bottom) => CursorShape::ResizeBottom,
+                        Some(Grip::Corner) => CursorShape::ResizeCorner,
+                        None => CursorShape::Arrow,
+                    };
+                    self.platform.set_cursor(window, shape)?;
+                }
                 if self.drag.is_dragging() {
                     let pointer = self.platform.pointer()?;
                     self.drag.motion(&mut self.layout, pointer);

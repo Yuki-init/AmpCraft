@@ -29,6 +29,19 @@ pub enum WindowKind {
     Popup,
 }
 
+/// Mouse pointer shapes the app asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum CursorShape {
+    #[default]
+    Arrow,
+    /// Over a window's right edge: drag to change the width.
+    ResizeRight,
+    /// Over the bottom edge: drag to change the height.
+    ResizeBottom,
+    /// Over the bottom-right corner: drag to change both.
+    ResizeCorner,
+}
+
 /// Parameters for a new window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowSpec {
@@ -177,6 +190,8 @@ pub trait Platform {
     fn grab_input(&mut self, id: WindowId) -> Result<bool>;
     /// Ends [`Platform::grab_input`].
     fn release_input(&mut self) -> Result<()>;
+    /// The pointer shape while over `id`, from the desktop's cursor theme when there is one.
+    fn set_cursor(&mut self, id: WindowId, cursor: CursorShape) -> Result<()>;
     /// Next event, waiting at most `timeout` (`None` waits forever).
     fn next_event(&mut self, timeout: Option<Duration>) -> Result<Option<Event>>;
     /// Sends buffered requests to the display.

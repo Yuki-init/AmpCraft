@@ -208,7 +208,7 @@ pub struct PlaylistWindow {
     /// Pointer offset inside the scroll handle while dragging it.
     scroll_drag: Option<i32>,
     /// Pointer position and window size when a resize began.
-    resize: Option<(Point, i32, i32)>,
+    resize: Option<crate::grip::Resize>,
     last_click: Option<(EntryId, u64)>,
     rows: HashMap<(String, u32, u32), TextStrip>,
     bar_menu: Option<BarMenu>,
@@ -348,6 +348,14 @@ impl PlaylistWindow {
             || self.scroll_drag.is_some()
             || self.resize.is_some()
             || self.bar_menu.is_some()
+    }
+
+    /// The resize grip under `p` (none while shaded).
+    pub fn grip(&self, p: Point) -> Option<crate::grip::Grip> {
+        if self.shaded {
+            return None;
+        }
+        crate::grip::grip_at(self.w, self.h, p, self.control_rect(PlControl::Resize), TOP)
     }
 
     /// Closes an open bottom-bar menu (the window lost focus).
@@ -559,6 +567,10 @@ impl PlaylistWindow {
                 }
             };
         }
+        if let Some(grip) = self.grip(p) {
+            self.resize = Some(crate::grip::Resize::new(grip, p, self.w, self.h));
+            return (PlDown::Control(PlControl::Resize), Vec::new());
+        }
         let Some(control) = self.hit_test(p) else {
             return if p.y < TOP {
                 (PlDown::DragWindow, Vec::new())
@@ -579,7 +591,14 @@ impl PlaylistWindow {
                     self.scroll_drag = Some(HANDLE_H / 2);
                 }
             }
-            PlControl::Resize => self.resize = Some((p, self.w, self.h)),
+            PlControl::Resize => {
+                self.resize = Some(crate::grip::Resize::new(
+                    crate::grip::Grip::Corner,
+                    p,
+                    self.w,
+                    self.h,
+                ));
+            }
             PlControl::Add
             | PlControl::Remove
             | PlControl::Select
@@ -643,11 +662,8 @@ impl PlaylistWindow {
             self.scroll_to_handle(p.y - offset);
             return Vec::new();
         }
-        if let Some((start, w0, h0)) = self.resize {
-            let (w, h) = (
-                snap(w0 + p.x - start.x, MIN_W, STEP_W),
-                snap(h0 + p.y - start.y, MIN_H, STEP_H),
-            );
+        if let Some(r) = self.resize {
+            let (w, h) = r.size(p, (MIN_W, STEP_W), (MIN_H, STEP_H));
             if (w, h) != (self.w, self.h) {
                 self.w = w;
                 self.h = h;
@@ -1397,6 +1413,34 @@ mod tests {
             w.pointer_down(Point::new(5, 100), NONE, 0).0,
             PlDown::DragWindow
         );
+    }
+
+    #[test]
+    fn edges_resize_one_way() {
+        let mut w = window(2);
+        let (w0, h0) = w.size();
+        // Right edge, below the title bar: width only.
+        let p = Point::new(w0 - 1, 60);
+        assert_eq!(w.grip(p), Some(crate::grip::Grip::Right));
+        w.pointer_down(p, NONE, 0);
+        assert_eq!(
+            w.pointer_move(Point::new(p.x + 30, p.y + 50)),
+            vec![PlaylistAction::Resize(w0 + STEP_W, h0)]
+        );
+        w.pointer_up(Point::new(p.x + 30, p.y + 50));
+        // Bottom edge: height only.
+        let (w1, _) = w.size();
+        let p = Point::new(60, h0 - 1);
+        w.pointer_down(p, NONE, 0);
+        assert_eq!(
+            w.pointer_move(Point::new(p.x + 80, p.y + 30)),
+            vec![PlaylistAction::Resize(w1, h0 + STEP_H)]
+        );
+        w.pointer_up(p);
+        // The close button is not an edge, and shaded windows do not resize.
+        assert_eq!(w.grip(Point::new(w1 - 2, 5)), None);
+        w.shaded = true;
+        assert_eq!(w.grip(Point::new(w1 - 1, 60)), None);
     }
 
     #[test]

@@ -179,7 +179,7 @@ pub struct LibraryWindow {
     pressed: Option<(Pressed, bool)>,
     /// A scroll handle being dragged, and the pointer offset inside it.
     scroll_drag: Option<(Pane, i32)>,
-    resize: Option<(Point, i32, i32)>,
+    resize: Option<crate::grip::Resize>,
     last_click: Option<(Pane, i64, u64)>,
     text_cache: HashMap<(String, u32, u32), TextStrip>,
     /// Bumped when data (panes, rows, status, skin) changes, for [`Self::render_hash`].
@@ -401,6 +401,11 @@ impl LibraryWindow {
 
     pub fn view(&self) -> LibView {
         self.view
+    }
+
+    /// The resize grip under `p`: the corner handle or the right or bottom edge.
+    pub fn grip(&self, p: Point) -> Option<crate::grip::Grip> {
+        crate::grip::grip_at(self.w, self.h, p, self.resize_rect(), generic::TOP_H)
     }
 
     pub fn is_interacting(&self) -> bool {
@@ -716,8 +721,8 @@ impl LibraryWindow {
             self.pressed = Some((Pressed::Close, true));
             return (LibDown::Handled, Vec::new());
         }
-        if inside(self.resize_rect(), p) {
-            self.resize = Some((p, self.w, self.h));
+        if let Some(grip) = self.grip(p) {
+            self.resize = Some(crate::grip::Resize::new(grip, p, self.w, self.h));
             return (LibDown::Handled, Vec::new());
         }
         if p.y < generic::TOP_H {
@@ -824,11 +829,8 @@ impl LibraryWindow {
             self.scroll_to(pane, p.y - offset);
             return Vec::new();
         }
-        if let Some((start, w0, h0)) = self.resize {
-            let (w, h) = (
-                snap(w0 + p.x - start.x, MIN_W, STEP_W),
-                snap(h0 + p.y - start.y, MIN_H, STEP_H),
-            );
+        if let Some(r) = self.resize {
+            let (w, h) = r.size(p, (MIN_W, STEP_W), (MIN_H, STEP_H));
             if (w, h) != (self.w, self.h) {
                 self.w = w;
                 self.h = h;
@@ -1842,6 +1844,23 @@ mod tests {
             w.render(&skin, &mut NoFallback, 1)
         };
         assert_eq!(small.width() as i32, MIN_W);
+    }
+
+    #[test]
+    fn edges_resize_one_way() {
+        let mut w = window();
+        let (w0, h0) = w.size();
+        let p = Point::new(w0 / 2, h0 - 1);
+        assert_eq!(w.grip(p), Some(crate::grip::Grip::Bottom));
+        w.pointer_down(p, false, false, 0);
+        assert_eq!(
+            w.pointer_move(Point::new(p.x + 90, p.y + 30)),
+            vec![LibAction::Resize(w0, h0 + STEP_H)]
+        );
+        w.pointer_up(p);
+        let p = Point::new(w0 - 1, 100);
+        assert_eq!(w.grip(p), Some(crate::grip::Grip::Right));
+        assert_eq!(w.grip(Point::new(w0 - 1, 5)), None, "title bar");
     }
 
     #[test]

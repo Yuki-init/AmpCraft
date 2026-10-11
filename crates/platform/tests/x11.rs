@@ -527,3 +527,24 @@ fn popups_bypass_the_window_manager_and_grab_input() {
     p.set_visible(id, false).unwrap();
     p.flush().unwrap();
 }
+
+#[test]
+fn resize_cursors_are_set_and_cleared() {
+    let Some(mut p) = platform() else { return };
+    let id = shown(&mut p, "cursor", Rect::new(0, 0, 40, 40));
+    // The container has no cursor theme: the X cursor font is the fallback, so this
+    // exercises the whole path without a desktop.
+    p.set_cursor(id, amp_platform::CursorShape::ResizeCorner)
+        .unwrap();
+    p.set_cursor(id, amp_platform::CursorShape::ResizeCorner)
+        .unwrap();
+    p.set_cursor(id, amp_platform::CursorShape::ResizeRight)
+        .unwrap();
+    p.set_cursor(id, amp_platform::CursorShape::Arrow).unwrap();
+    // A round trip proves the server accepted every request.
+    p.pointer().unwrap();
+    assert!(
+        p.set_cursor(WindowId(999_999), amp_platform::CursorShape::Arrow)
+            .is_err()
+    );
+}

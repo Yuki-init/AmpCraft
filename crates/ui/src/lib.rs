@@ -2,6 +2,7 @@
 
 pub mod dock_drag;
 pub mod eq_window;
+pub mod grip;
 pub mod library_window;
 pub mod main_window;
 pub mod menu;
@@ -13,6 +14,7 @@ pub mod vis;
 
 pub use dock_drag::{DockDrag, Moves};
 pub use eq_window::{EqAction, EqDown, EqWindow};
+pub use grip::Grip;
 pub use library_window::{
     AlbumRow, ArtistRow, LibAction, LibDown, LibView, LibraryRow, LibraryWindow,
 };

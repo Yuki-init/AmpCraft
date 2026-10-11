@@ -23,8 +23,8 @@ use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
 use crate::{
-    Event, Modifiers, MouseButton, Platform, PlatformError, Point, Rect, Result, Size, WindowId,
-    WindowKind, WindowSpec,
+    CursorShape, Event, Modifiers, MouseButton, Platform, PlatformError, Point, Rect, Result, Size,
+    WindowId, WindowKind, WindowSpec,
 };
 
 x11rb::atom_manager! {
@@ -85,12 +85,17 @@ impl Keymap {
 pub struct X11Platform {
     conn: Arc<RustConnection>,
     root: xproto::Window,
+    screen: usize,
     depth: u8,
     visual: xproto::Visualid,
     gc: xproto::Gcontext,
     atoms: Atoms,
     windows: BTreeMap<u32, Size>,
     kinds: BTreeMap<u32, WindowKind>,
+    /// Themed cursors, loaded on first use, and the shape each window shows.
+    cursor_handle: Option<x11rb::cursor::Handle>,
+    cursors: BTreeMap<CursorShape, u32>,
+    window_cursor: BTreeMap<u32, CursorShape>,
     /// Windows asked to stay on top, and windows currently shown.
     above: BTreeSet<u32>,
     mapped: BTreeSet<u32>,
@@ -220,12 +225,16 @@ impl X11Platform {
         Ok(Self {
             conn,
             root,
+            screen: screen_num,
             depth,
             visual,
             gc,
             atoms,
             windows: BTreeMap::new(),
             kinds: BTreeMap::new(),
+            cursor_handle: None,
+            cursors: BTreeMap::new(),
+            window_cursor: BTreeMap::new(),
             above: BTreeSet::new(),
             mapped: BTreeSet::new(),
             control,
@@ -575,6 +584,7 @@ impl Platform for X11Platform {
         self.conn.destroy_window(id.0).conn()?;
         self.windows.remove(&id.0);
         self.kinds.remove(&id.0);
+        self.window_cursor.remove(&id.0);
         self.above.remove(&id.0);
         self.mapped.remove(&id.0);
         Ok(())
@@ -656,6 +666,44 @@ impl Platform for X11Platform {
             .conn()?
             .reply();
         Ok(pointer.status == xproto::GrabStatus::SUCCESS)
+    }
+
+    fn set_cursor(&mut self, id: WindowId, cursor: CursorShape) -> Result<()> {
+        self.check(id)?;
+        if self.window_cursor.get(&id.0).copied().unwrap_or_default() == cursor {
+            return Ok(());
+        }
+        self.window_cursor.insert(id.0, cursor);
+        let xid = if cursor == CursorShape::Arrow {
+            // No cursor of our own: the window shows its parent's (the desktop default).
+            x11rb::NONE
+        } else if let Some(&c) = self.cursors.get(&cursor) {
+            c
+        } else {
+            if self.cursor_handle.is_none() {
+                let db = x11rb::resource_manager::new_from_default(&*self.conn).conn()?;
+                let handle = x11rb::cursor::Handle::new(&*self.conn, self.screen, &db)
+                    .conn()?
+                    .reply()
+                    .conn()?;
+                self.cursor_handle = Some(handle);
+            }
+            let name = match cursor {
+                CursorShape::ResizeRight => "right_side",
+                CursorShape::ResizeBottom => "bottom_side",
+                _ => "bottom_right_corner",
+            };
+            let Some(handle) = &self.cursor_handle else {
+                return Ok(());
+            };
+            let c = handle.load_cursor(&*self.conn, name).conn()?;
+            self.cursors.insert(cursor, c);
+            c
+        };
+        self.conn
+            .change_window_attributes(id.0, &xproto::ChangeWindowAttributesAux::new().cursor(xid))
+            .conn()?;
+        Ok(())
     }
 
     fn release_input(&mut self) -> Result<()> {
