@@ -221,7 +221,7 @@ impl GenExColors {
                 .get(48 + 2 * i, 0)
                 .map_or(fallback, |p| p | 0xFF00_0000)
         };
-        Self {
+        let mut c = Self {
             item_background: at(0, d.item_background),
             item_foreground: at(1, d.item_foreground),
             window_background: at(2, d.window_background),
@@ -244,7 +244,19 @@ impl GenExColors {
             list_text_highlighted_background: at(19, d.list_text_highlighted_background),
             list_text_selected: at(20, d.list_text_selected),
             list_text_selected_background: at(21, d.list_text_selected_background),
+        };
+        // Older skins (including the stock 2.91 one) leave the last colors undefined, so they
+        // read as one background color and selected text would vanish. Use the playlist
+        // selection color with white text instead.
+        if c.list_text_selected == c.list_text_selected_background {
+            c.list_text_selected = rgb(255, 255, 255);
+            c.list_text_selected_background = c.playlist_selection;
         }
+        if c.list_text_highlighted == c.list_text_highlighted_background {
+            c.list_text_highlighted = rgb(255, 255, 255);
+            c.list_text_highlighted_background = c.playlist_selection;
+        }
+        c
     }
 }
 
@@ -296,11 +308,21 @@ mod tests {
     fn genex_colors_from_row_zero_with_defaults() {
         let mut genex = Bitmap::new(130, 75, 0);
         genex.set(48, 0, rgb(1, 2, 3));
-        genex.set(90, 0, rgb(4, 5, 6));
         let skin = Skin::from_sheets([(Sheet::GenEx, genex)]);
         let c = GenExColors::from_skin(&skin);
         assert_eq!(c.item_background, rgb(1, 2, 3));
-        assert_eq!(c.list_text_selected_background, rgb(4, 5, 6));
+        // Row 0 is otherwise black, so selected text equals its background: fallback applies.
+        assert_eq!(c.list_text_selected, rgb(255, 255, 255));
+        assert_eq!(c.list_text_selected_background, c.playlist_selection);
+        let mut genex = Bitmap::new(130, 75, 0);
+        genex.set(88, 0, rgb(9, 9, 9));
+        genex.set(90, 0, rgb(4, 5, 6));
+        let c = GenExColors::from_skin(&Skin::from_sheets([(Sheet::GenEx, genex)]));
+        assert_eq!(
+            c.list_text_selected_background,
+            rgb(4, 5, 6),
+            "defined colors are kept"
+        );
         let plain = GenExColors::from_skin(&Skin::from_sheets([]));
         assert_eq!(plain, GenExColors::default());
     }

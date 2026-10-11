@@ -61,6 +61,48 @@ pub fn pick_files(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
     spawned.is_ok()
 }
 
+/// Asks the user for one folder. Sends the choice (or nothing) on `done`.
+pub fn pick_folder(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
+    let helper = ["kdialog", "zenity"]
+        .into_iter()
+        .find(|h| which(h).is_some());
+    let Some(helper) = helper else {
+        log::warn!("no file dialog helper found: install kdialog or zenity");
+        return false;
+    };
+    let start = start
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("/"));
+    let mut cmd = Command::new(helper);
+    if helper == "kdialog" {
+        cmd.arg("--getexistingdirectory")
+            .arg(&start)
+            .args(["--title", "Add folder to library"]);
+    } else {
+        cmd.args([
+            "--file-selection",
+            "--directory",
+            "--title=Add folder to library",
+        ])
+        .arg(format!("--filename={}/", start.display()));
+    }
+    std::thread::Builder::new()
+        .name("folder-dialog".into())
+        .spawn(move || {
+            let paths = match cmd.output() {
+                Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .map(PathBuf::from)
+                    .take(1)
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let _ = done.send(paths);
+        })
+        .is_ok()
+}
+
 fn which(program: &str) -> Option<PathBuf> {
     std::env::var_os("PATH")?
         .to_str()?

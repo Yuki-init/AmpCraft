@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
+use amp_app::config::Config;
 use amp_app::metadata::{Prober, TrackMeta};
 use amp_app::null_sink::NullSink;
 use amp_app::system_font::SystemFont;
@@ -15,6 +16,7 @@ use amp_audio_out::{AudioOutput, Controls, OutputDevice};
 use amp_core::{PlaybackState, Player, PlayerConfig, Repeat, Status, TrackId};
 use amp_dock::{Layout, PanelId, Rect};
 use amp_dsp::{AnalyzerReader, EqControls, Equalizer, FFT_SIZE, Spectrum};
+use amp_library::{Filter, Library};
 use amp_platform::AppDirs;
 use amp_platform::x11::X11Platform;
 use amp_platform::{
@@ -23,8 +25,9 @@ use amp_platform::{
 use amp_skin::{Bitmap, Skin};
 use amp_ui::main_window::{HEIGHT, WIDTH};
 use amp_ui::{
-    Action, DockDrag, EqAction, EqDown, EqWindow, MainWindow, MoveTracker, NowPlaying, PlDown,
-    PlayState, PlaylistAction, PlaylistEntry, PlaylistWindow, PointerDown, SelectMods,
+    Action, DockDrag, EqAction, EqDown, EqWindow, LibAction, LibDown, LibraryRow, LibraryWindow,
+    MainWindow, MoveTracker, NowPlaying, PlDown, PlayState, PlaylistAction, PlaylistEntry,
+    PlaylistWindow, PointerDown, SelectMods, Selection,
 };
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -32,6 +35,7 @@ use clap::Parser;
 const MAIN: PanelId = PanelId(1);
 const EQ: PanelId = PanelId(2);
 const PL: PanelId = PanelId(3);
+const LIB: PanelId = PanelId(4);
 
 #[derive(Parser)]
 #[command(version, about = "Classic skinnable audio player")]
@@ -51,6 +55,9 @@ struct Args {
     /// Starting volume, 0 to 100.
     #[arg(long, default_value_t = 50)]
     volume: u8,
+    /// Open the media library window at start (toggle with Alt+L).
+    #[arg(long)]
+    library: bool,
     /// Queue every library track matching this text (title, artist, album or path), after
     /// any files given. Scan first with `openamp-cli library scan`.
     #[arg(long)]
@@ -69,6 +76,12 @@ enum AudioArg {
 enum Output {
     Device(#[allow(dead_code)] AudioOutput),
     Null(#[allow(dead_code)] NullSink),
+}
+
+/// Progress from the background library scan.
+enum ScanMsg {
+    Progress(usize, usize),
+    Done(Result<amp_library::ScanReport, String>),
 }
 
 /// How files chosen in the dialog are used.
@@ -97,6 +110,15 @@ struct App {
     main: MainWindow,
     eq: EqWindow,
     pl: PlaylistWindow,
+    lib: LibraryWindow,
+    library: Option<Library>,
+    db_path: PathBuf,
+    config: Config,
+    /// Paths of the rows shown in the library window, by library id.
+    lib_paths: HashMap<i64, PathBuf>,
+    /// Messages from a running library scan.
+    scan: Option<Receiver<ScanMsg>>,
+    folder_picks: (Sender<Vec<PathBuf>>, Receiver<Vec<PathBuf>>),
     layout: Layout,
     drag: DockDrag,
     tracker: MoveTracker<WindowId>,
@@ -303,6 +325,7 @@ impl App {
             let frame = match self.wins[i].panel {
                 MAIN => self.main.render(&self.skin, &mut self.font, now_ms, scale),
                 EQ => self.eq.render(&self.skin, scale),
+                LIB => self.lib.render(&self.skin, &mut self.font, scale),
                 _ => self.pl.render(&self.skin, &mut self.font, now_ms, scale),
             };
             let w = &mut self.wins[i];
@@ -466,10 +489,193 @@ impl App {
         Ok(())
     }
 
+    fn show_library(&mut self, visible: bool) -> Result<()> {
+        if visible {
+            self.refresh_library();
+            let q = self.lib.query();
+            self.act_lib(q)?;
+        }
+        self.set_panel_visible(LIB, visible)
+    }
+
+    /// Reloads the tree (counts, artists, albums, genres) from the database.
+    fn refresh_library(&mut self) {
+        let Some(lib) = &self.library else {
+            self.lib.set_status("Library unavailable");
+            return;
+        };
+        let stats = lib.stats().unwrap_or_default();
+        self.lib.set_tree(
+            stats.tracks,
+            lib.artists().unwrap_or_default(),
+            lib.albums().unwrap_or_default(),
+            lib.genres().unwrap_or_default(),
+        );
+        if self.scan.is_none() {
+            self.lib.set_status(if stats.tracks == 0 {
+                "Empty: Add folder or Rescan".to_owned()
+            } else {
+                format!("{} tracks", stats.tracks)
+            });
+        }
+    }
+
+    /// Scans the library folders on a worker thread, reporting progress.
+    fn start_scan(&mut self) {
+        if self.scan.is_some() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let roots = self.config.library.roots(self.dirs.music.as_deref());
+        let db = self.db_path.clone();
+        let spawned = std::thread::Builder::new()
+            .name("library-scan".into())
+            .spawn(move || {
+                let progress = tx.clone();
+                let result = Library::open(&db)
+                    .and_then(|mut lib| {
+                        lib.scan(&roots, &amp_library::FfmpegTags, &mut |done, total| {
+                            if done % 10 == 0 || done == total {
+                                let _ = progress.send(ScanMsg::Progress(done, total));
+                            }
+                        })
+                    })
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(ScanMsg::Done(result));
+            });
+        match spawned {
+            Ok(_) => {
+                self.lib.set_status("Scanning...");
+                self.scan = Some(rx);
+            }
+            Err(e) => log::warn!("cannot start scan: {e}"),
+        }
+    }
+
+    fn poll_scan(&mut self) -> Result<()> {
+        let Some(rx) = &self.scan else {
+            return Ok(());
+        };
+        let mut finished = None;
+        let mut status = None;
+        for msg in rx.try_iter() {
+            match msg {
+                ScanMsg::Progress(done, total) => status = Some(format!("Scanning {done}/{total}")),
+                ScanMsg::Done(r) => finished = Some(r),
+            }
+        }
+        if let Some(s) = status {
+            self.lib.set_status(s);
+        }
+        let Some(result) = finished else {
+            return Ok(());
+        };
+        self.scan = None;
+        self.refresh_library();
+        match result {
+            Ok(r) => {
+                let total = self
+                    .library
+                    .as_ref()
+                    .and_then(|l| l.stats().ok())
+                    .map_or(0, |s| s.tracks);
+                self.lib.set_status(format!(
+                    "{total} tracks ({} new, {} removed)",
+                    r.added, r.removed
+                ));
+            }
+            Err(e) => self.lib.set_status(format!("Scan failed: {e}")),
+        }
+        let q = self.lib.query();
+        self.act_lib(q)
+    }
+
+    fn lib_paths_for(&self, ids: &[i64]) -> Vec<PathBuf> {
+        ids.iter()
+            .filter_map(|id| self.lib_paths.get(id).cloned())
+            .collect()
+    }
+
+    fn act_lib(&mut self, action: LibAction) -> Result<()> {
+        match action {
+            LibAction::Query { selection, text } => {
+                let Some(lib) = &self.library else {
+                    return Ok(());
+                };
+                let mut filter = Filter {
+                    text,
+                    ..Filter::default()
+                };
+                match selection {
+                    Selection::All => {}
+                    Selection::Artist(a) => filter.artist = Some(a),
+                    Selection::Album(a) => filter.album = Some(a),
+                    Selection::Genre(g) => filter.genre = Some(g),
+                }
+                let tracks = lib.tracks(&filter, 50_000)?;
+                self.lib_paths = tracks.iter().map(|t| (t.id, t.path.clone())).collect();
+                let rows = tracks
+                    .into_iter()
+                    .map(|t| LibraryRow {
+                        id: t.id,
+                        artist: t.tags.artist.clone().unwrap_or_default(),
+                        title: t.tags.title.clone().unwrap_or_else(|| file_stem(&t.path)),
+                        album: t.tags.album.clone().unwrap_or_default(),
+                        duration: t.tags.duration,
+                    })
+                    .collect();
+                self.lib.set_tracks(rows);
+            }
+            LibAction::Play { ids, start } => {
+                let paths = self.lib_paths_for(&ids);
+                if paths.is_empty() {
+                    return Ok(());
+                }
+                self.player.stop()?;
+                self.player.with_queue(|q| q.clear());
+                let queued = self.player.enqueue(paths);
+                if let Some(id) = queued.get(start.min(queued.len().saturating_sub(1))) {
+                    self.player.play_track(*id)?;
+                }
+            }
+            LibAction::Enqueue(ids) => {
+                let paths = self.lib_paths_for(&ids);
+                self.player.enqueue(paths);
+            }
+            LibAction::AddFolder => {
+                let start = self.dirs.music.clone();
+                amp_app::dialog::pick_folder(start, self.folder_picks.0.clone());
+            }
+            LibAction::Rescan => self.start_scan(),
+            LibAction::Close => self.set_panel_visible(LIB, false)?,
+            LibAction::Resize(w, h) => {
+                self.layout
+                    .resize(LIB, amp_dock::Size::new(w * self.scale, h * self.scale));
+                self.sync_windows()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn folder_picked(&mut self, folders: Vec<PathBuf>) -> Result<()> {
+        let Some(folder) = folders.into_iter().next() else {
+            return Ok(());
+        };
+        if self.config.library.add(folder)
+            && let Err(e) = self.config.save(&self.dirs.config_file())
+        {
+            log::warn!("{e}");
+            self.lib.set_status("Could not save settings");
+        }
+        self.start_scan();
+        Ok(())
+    }
+
     fn interacting(&self, panel: PanelId) -> bool {
         match panel {
             MAIN => self.main.is_interacting(),
             EQ => self.eq.is_interacting(),
+            LIB => self.lib.is_interacting(),
             _ => self.pl.is_interacting(),
         }
     }
@@ -510,6 +716,14 @@ impl App {
                                 }
                                 down == EqDown::DragWindow
                             }
+                            LIB => {
+                                let (down, actions) =
+                                    self.lib.pointer_down(p, mods.ctrl, mods.shift, now_ms);
+                                for a in actions {
+                                    self.act_lib(a)?;
+                                }
+                                down == LibDown::DragWindow
+                            }
                             _ => {
                                 let (down, actions) =
                                     self.pl.pointer_down(p, select_mods(mods), now_ms);
@@ -527,6 +741,8 @@ impl App {
                         let up = button == MouseButton::WheelUp;
                         if panel == PL {
                             self.pl.wheel(up);
+                        } else if panel == LIB {
+                            self.lib.wheel(p, up);
                         } else {
                             for a in self.main.wheel(up) {
                                 self.act(a)?;
@@ -554,6 +770,11 @@ impl App {
                         EQ => {
                             for a in self.eq.pointer_move(p) {
                                 self.act_eq(a)?;
+                            }
+                        }
+                        LIB => {
+                            for a in self.lib.pointer_move(p) {
+                                self.act_lib(a)?;
                             }
                         }
                         _ => {
@@ -586,6 +807,11 @@ impl App {
                                 self.act_eq(a)?;
                             }
                         }
+                        LIB => {
+                            for a in self.lib.pointer_up(p) {
+                                self.act_lib(a)?;
+                            }
+                        }
                         _ => {
                             for a in self.pl.pointer_up(p) {
                                 self.act_playlist(a)?;
@@ -609,6 +835,17 @@ impl App {
                 mods,
             } => {
                 let mut handled = false;
+                if mods.alt && (keysym == 0x6c || keysym == 0x4c) {
+                    let visible = self.wins.iter().any(|w| w.panel == LIB && w.visible);
+                    return self.show_library(!visible);
+                }
+                if self.panel_of(window) == Some(LIB) {
+                    let actions = self.lib.key(keysym, mods.ctrl);
+                    handled = true;
+                    for a in actions {
+                        self.act_lib(a)?;
+                    }
+                }
                 if self.panel_of(window) == Some(PL) {
                     let before = self.pl.selected();
                     let actions = self.pl.key(keysym, select_mods(mods));
@@ -627,6 +864,7 @@ impl App {
                 match self.panel_of(window) {
                     Some(MAIN) => self.main.focused = focused,
                     Some(EQ) => self.eq.focused = focused,
+                    Some(LIB) => self.lib.focused = focused,
                     Some(_) => self.pl.focused = focused,
                     None => {}
                 }
@@ -663,7 +901,8 @@ impl App {
             || self.main.vis.is_active()
             || self.drag.is_dragging()
             || [MAIN, EQ, PL].iter().any(|p| self.interacting(*p))
-            || self.pick_mode.is_some();
+            || self.pick_mode.is_some()
+            || self.scan.is_some();
         Duration::from_millis(if animating { 33 } else { 250 })
     }
 
@@ -675,6 +914,10 @@ impl App {
             if let Ok(paths) = self.picks.1.try_recv() {
                 self.picked(paths)?;
             }
+            if let Ok(folders) = self.folder_picks.1.try_recv() {
+                self.folder_picked(folders)?;
+            }
+            self.poll_scan()?;
             self.update();
             self.redraw(false)?;
             self.platform.flush()?;
@@ -752,10 +995,20 @@ fn main() -> Result<()> {
     };
     controls.set_volume(f32::from(args.volume.min(100)) / 100.0);
 
+    let config = Config::load(&dirs.config_file()).unwrap_or_else(|e| {
+        log::warn!("{e}; using default settings");
+        Config::default()
+    });
+    let db_path = dirs.data.join("library.sqlite3");
+    let library = match Library::open(&db_path) {
+        Ok(l) => Some(l),
+        Err(e) => {
+            log::warn!("library unavailable: {e}");
+            None
+        }
+    };
     let mut files = amp_app::files::expand(&args.files);
-    if let Some(text) = &args.search {
-        let lib = amp_library::Library::open(&dirs.data.join("library.sqlite3"))
-            .context("opening the library")?;
+    if let (Some(text), Some(lib)) = (&args.search, &library) {
         let found = lib.search(text, 10_000)?;
         log::info!("library search {text:?}: {} tracks", found.len());
         files.extend(found.into_iter().map(|t| t.path));
@@ -772,6 +1025,8 @@ fn main() -> Result<()> {
 
     let mut pl = PlaylistWindow::new();
     let (pl_w, pl_h) = pl.size();
+    let lib_win = LibraryWindow::new();
+    let (lib_w, lib_h) = lib_win.size();
     let rects = [
         (
             MAIN,
@@ -790,6 +1045,12 @@ fn main() -> Result<()> {
             "Playlist",
             WindowKind::Panel,
             Rect::new(0, 2 * HEIGHT, pl_w, pl_h),
+        ),
+        (
+            LIB,
+            "Media Library",
+            WindowKind::Panel,
+            Rect::new(WIDTH, 0, lib_w, lib_h),
         ),
     ];
     let mut layout = Layout::new();
@@ -816,7 +1077,7 @@ fn main() -> Result<()> {
             id,
             panel,
             applied: rect,
-            visible: true,
+            visible: panel != LIB,
             frame: None,
         });
     }
@@ -838,6 +1099,13 @@ fn main() -> Result<()> {
         main,
         eq: EqWindow::new(),
         pl,
+        lib: lib_win,
+        library,
+        db_path,
+        config,
+        lib_paths: HashMap::new(),
+        scan: None,
+        folder_picks: mpsc::channel(),
         layout,
         drag: DockDrag::new(),
         tracker: MoveTracker::new(),
@@ -873,8 +1141,12 @@ fn main() -> Result<()> {
     }
     app.sync_windows()?;
     app.apply_shapes()?;
-    for w in &app.wins {
+    app.layout.set_visible(LIB, false);
+    for w in app.wins.iter().filter(|w| w.visible) {
         app.platform.set_visible(w.id, true)?;
+    }
+    if args.library {
+        app.show_library(true)?;
     }
     app.platform.flush()?;
     if have_files {

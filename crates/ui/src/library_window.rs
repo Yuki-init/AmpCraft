@@ -407,6 +407,16 @@ impl LibraryWindow {
         }
     }
 
+    fn tree_selected(&self, item: &TreeItem) -> bool {
+        match (item, &self.selection) {
+            (TreeItem::All(_), Selection::All) => true,
+            (TreeItem::Value(Section::Artists, v, _), Selection::Artist(s))
+            | (TreeItem::Value(Section::Albums, v, _), Selection::Album(s))
+            | (TreeItem::Value(Section::Genres, v, _), Selection::Genre(s)) => v == s,
+            _ => false,
+        }
+    }
+
     // ---- behavior ----
 
     fn apply_sort(&mut self) {
@@ -882,13 +892,7 @@ impl LibraryWindow {
             .skip(self.tree_scroll)
             .take(self.tree_rows())
         {
-            let selected = match (item, &self.selection) {
-                (TreeItem::All(_), Selection::All) => true,
-                (TreeItem::Value(Section::Artists, v, _), Selection::Artist(s))
-                | (TreeItem::Value(Section::Albums, v, _), Selection::Album(s))
-                | (TreeItem::Value(Section::Genres, v, _), Selection::Genre(s)) => v == s,
-                _ => false,
-            };
+            let selected = self.tree_selected(item);
             if selected {
                 let y = tree.y + (i - self.tree_scroll) as i32 * ROW_H;
                 b.fill_rect(
@@ -928,10 +932,14 @@ impl LibraryWindow {
             } else {
                 (button::LEFT, button::CENTER, button::RIGHT)
             };
-            let mut x = r.x + 4;
-            while x < r.x + r.w - 4 {
-                draw(&mut b, c, x, r.y);
-                x += 39;
+            // Tile the center piece, clipping the last tile to the button.
+            if let Some(sheet) = skin.sheet(c.sheet) {
+                let mut x = r.x + 4;
+                while x < r.x + r.w - 4 {
+                    let w = c.rect.w.min(r.x + r.w - 4 - x);
+                    b.blit(sheet, Rect::new(c.rect.x, c.rect.y, w, c.rect.h), x, r.y);
+                    x += c.rect.w;
+                }
             }
             draw(&mut b, l, r.x, r.y);
             draw(&mut b, rt, r.x + r.w - 4, r.y);
@@ -970,9 +978,14 @@ impl LibraryWindow {
                 }
                 TreeItem::Value(_, v, n) => (format!("{v} ({n})"), 12),
             };
+            let color = if self.tree_selected(item) {
+                colors.list_text_selected
+            } else {
+                colors.item_foreground
+            };
             texts.push((
                 text,
-                colors.item_foreground,
+                color,
                 Rect::new(tree.x + indent, y, tree.w - indent, ROW_H),
                 Align::Left,
             ));
