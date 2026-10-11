@@ -34,6 +34,8 @@ struct Cli {
 enum Cmd {
     /// Print stream information and tags.
     Probe { files: Vec<PathBuf> },
+    /// List audio output devices.
+    Devices,
     /// Decode a file to a 32-bit float WAV.
     Decode {
         file: PathBuf,
@@ -54,6 +56,9 @@ enum Cmd {
         files: Vec<PathBuf>,
         #[arg(long, value_enum, default_value_t = Sink::Device)]
         sink: Sink,
+        /// Output device id or part of its name (see `devices`). Default: system default.
+        #[arg(long)]
+        device: Option<String>,
         /// Start position in the first track, in seconds.
         #[arg(long)]
         seek: Option<f64>,
@@ -91,6 +96,12 @@ fn main() -> Result<()> {
     StderrLogger::install();
     match Cli::parse().command {
         Cmd::Probe { files } => probe(&files),
+        Cmd::Devices => {
+            for (id, name) in amp_audio_out::list_outputs()? {
+                println!("{id:<40} {name}");
+            }
+            Ok(())
+        }
         Cmd::Decode {
             file,
             output,
@@ -101,12 +112,13 @@ fn main() -> Result<()> {
         Cmd::Play {
             files,
             sink,
+            device,
             seek,
             shuffle,
             repeat,
             volume,
             balance,
-        } => play(files, sink, seek, shuffle, repeat, volume, balance),
+        } => play(files, sink, device, seek, shuffle, repeat, volume, balance),
     }
 }
 
@@ -214,6 +226,7 @@ impl Drop for SinkHandle {
 fn play(
     files: Vec<PathBuf>,
     sink: Sink,
+    device_name: Option<String>,
     seek: Option<f64>,
     shuffle: bool,
     repeat: RepeatArg,
@@ -225,7 +238,7 @@ fn play(
     }
     let controls;
     let device = match sink {
-        Sink::Device => Some(OutputDevice::default_output().context("opening audio device")?),
+        Sink::Device => Some(open_device(device_name.as_deref())?),
         _ => None,
     };
     let rate = device.as_ref().map_or(44_100, OutputDevice::sample_rate);
@@ -237,7 +250,8 @@ fn play(
     let _sink = match device {
         Some(dev) => {
             log::info!(
-                "output: {} Hz, {} ch, {:?}",
+                "output {}: {} Hz, {} ch, {:?}",
+                dev.id().unwrap_or_default(),
                 dev.sample_rate(),
                 dev.channels(),
                 dev.sample_format()
@@ -340,6 +354,27 @@ fn play(
     }
     eprintln!("finished");
     Ok(())
+}
+
+/// Opens the named device, or the default one. If the default is unusable (common on Linux
+/// when ALSA's default goes straight to hardware a sound server holds), tries the sound
+/// servers' own ALSA devices.
+fn open_device(name: Option<&str>) -> Result<OutputDevice> {
+    if let Some(n) = name {
+        return OutputDevice::named(n).context("opening audio device (see `devices`)");
+    }
+    match OutputDevice::default_output() {
+        Ok(d) => Ok(d),
+        Err(default_err) => {
+            for fallback in ["pipewire", "pulse"] {
+                if let Ok(d) = OutputDevice::named(fallback) {
+                    log::info!("default device unusable ({default_err}), using {fallback}");
+                    return Ok(d);
+                }
+            }
+            Err(default_err).context("opening default audio device (see `devices`)")
+        }
+    }
 }
 
 /// Pulls audio and throws it away, either at real-time pace or as fast as possible.

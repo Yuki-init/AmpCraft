@@ -22,6 +22,8 @@ pub enum OutputError {
     UnsupportedFormat(SampleFormat),
     #[error("device has no output channels")]
     NoChannels,
+    #[error("no output device matches {0:?}")]
+    NotFound(String),
     #[error("audio backend error: {0}")]
     Backend(#[from] cpal::Error),
 }
@@ -124,6 +126,27 @@ where
     }
 }
 
+fn device_id(device: &cpal::Device) -> Option<String> {
+    device.id().ok().map(|id| id.id().to_owned())
+}
+
+fn device_name(device: &cpal::Device) -> Option<String> {
+    device.description().ok().map(|d| d.name().to_owned())
+}
+
+/// Available outputs as (id, human-readable name) pairs.
+pub fn list_outputs() -> Result<Vec<(String, String)>> {
+    let host = cpal::default_host();
+    Ok(host
+        .output_devices()?
+        .filter_map(|d| {
+            let id = device_id(&d)?;
+            let name = device_name(&d).unwrap_or_else(|| id.clone());
+            Some((id, name))
+        })
+        .collect())
+}
+
 /// An output device and the stream configuration chosen for it.
 pub struct OutputDevice {
     device: cpal::Device,
@@ -146,6 +169,34 @@ impl OutputDevice {
     pub fn default_output() -> Result<Self> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or(OutputError::NoDevice)?;
+        Self::from_device(device)
+    }
+
+    /// The output whose id equals `query`, or failing that, whose id or name contains it
+    /// (case-insensitive). See [`list_outputs`] for what is available.
+    pub fn named(query: &str) -> Result<Self> {
+        let host = cpal::default_host();
+        let mut devices: Vec<cpal::Device> = host.output_devices()?.collect();
+        let wanted = query.to_lowercase();
+        let exact = devices
+            .iter()
+            .position(|d| device_id(d).is_some_and(|id| id == query));
+        let fuzzy = || {
+            devices.iter().position(|d| {
+                let (id, name) = (device_id(d), device_name(d));
+                [id, name]
+                    .into_iter()
+                    .flatten()
+                    .any(|s| s.to_lowercase().contains(&wanted))
+            })
+        };
+        let index = exact
+            .or_else(fuzzy)
+            .ok_or_else(|| OutputError::NotFound(query.to_owned()))?;
+        Self::from_device(devices.swap_remove(index))
+    }
+
+    fn from_device(device: cpal::Device) -> Result<Self> {
         let default = device.default_output_config()?;
         let rate = default.sample_rate();
         let preferred = device
@@ -171,6 +222,11 @@ impl OutputDevice {
             format: chosen.sample_format(),
             config: chosen.config(),
         })
+    }
+
+    /// Backend id of the device, e.g. `pipewire` or `hw:CARD=PCH,DEV=0` on ALSA.
+    pub fn id(&self) -> Option<String> {
+        device_id(&self.device)
     }
 
     pub fn sample_rate(&self) -> u32 {

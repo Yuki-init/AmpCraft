@@ -27,6 +27,17 @@ scripts/dev.sh cargo run --bin openamp-cli -- play FILE... [--sink device|null|f
 
 While playing, type `p` (pause), `n` (next), `b` (previous), `s SECS` (seek), `v 0-100` (volume) or `q` (quit) and press Enter. Inside the container the audio device is ALSA's null plugin, which is not paced in real time; use `--sink null` for real-time pacing. Set `OPENAMP_LOG=debug` for engine logs.
 
+## Running on the host with real audio
+
+The container cannot reach the sound server, so `scripts/host-run.sh` builds a binary in the container and runs it on the host, bundling the FFmpeg libraries the host lacks under `.cache/host-bin/`:
+
+```sh
+scripts/host-run.sh openamp-cli devices
+scripts/host-run.sh openamp-cli play --volume 30 FILE...
+```
+
+If ALSA's default device is unusable (common when PipeWire holds the card and `pipewire-alsa` is not installed), the CLI falls back to the `pipewire` or `pulse` ALSA device. Pass `--device NAME` to choose one.
+
 ## Music library tests
 
 When `/path/to/music` is mounted, the scripts mount it read-only at `/music` and an opt-in test decodes a sample of it, printing aggregate results only. `WINAMP_RS_MUSIC_SAMPLE` sets the sample size (default 60).
