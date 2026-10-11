@@ -271,3 +271,50 @@ fn directory_skin_loads() {
     let skin = Skin::load(dir.path()).unwrap();
     assert!(skin.sheet(Sheet::Text).is_some());
 }
+
+/// A theme exported as a .wsz with `drop` left out of the archive.
+fn theme_wsz_without(drop: &[&str]) -> Vec<u8> {
+    let full = amp_skin::theme::THEMES[0].export_wsz().unwrap();
+    let mut src = zip::ZipArchive::new(Cursor::new(full)).unwrap();
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..src.len() {
+        let mut f = src.by_index(i).unwrap();
+        let name = f.name().unwrap().into_owned();
+        if drop.iter().any(|d| name.eq_ignore_ascii_case(d)) {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut f, &mut bytes).unwrap();
+        out.start_file(name, SimpleFileOptions::default()).unwrap();
+        out.write_all(&bytes).unwrap();
+    }
+    out.finish().unwrap().into_inner()
+}
+
+#[test]
+fn skins_without_generic_art_get_it_in_their_own_colors() {
+    let skin = Skin::from_wsz(&theme_wsz_without(&["gen.bmp", "genex.bmp"])).unwrap();
+    assert!(skin.sheet(Sheet::Gen).is_some());
+    assert!(skin.sheet(Sheet::GenEx).is_some());
+    assert!(
+        skin.warnings().iter().all(|w| !w.contains("gen")),
+        "{:?}",
+        skin.warnings()
+    );
+    let colors = amp_skin::generic::GenExColors::from_skin(&skin);
+    let style = skin.playlist_style();
+    assert_eq!(colors.item_background, style.normal_bg | 0xFF00_0000);
+    assert_eq!(colors.item_foreground, style.normal | 0xFF00_0000);
+    // A skin that has its own generic art keeps it.
+    let full = Skin::from_wsz(&amp_skin::theme::THEMES[0].export_wsz().unwrap()).unwrap();
+    let theirs = amp_skin::theme::THEMES[0].skin();
+    assert_eq!(full.sheet(Sheet::Gen), theirs.sheet(Sheet::Gen));
+}
+
+#[test]
+fn nums_ex_alone_is_enough() {
+    let skin = Skin::from_wsz(&theme_wsz_without(&["numbers.bmp"])).unwrap();
+    assert!(skin.warnings().is_empty(), "{:?}", skin.warnings());
+    let skin = Skin::from_wsz(&theme_wsz_without(&["numbers.bmp", "nums_ex.bmp"])).unwrap();
+    assert_eq!(skin.warnings(), ["missing numbers.bmp"]);
+}

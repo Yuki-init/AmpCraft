@@ -1171,6 +1171,82 @@ fn genex_bmp(c: &Colors) -> Bitmap {
     b
 }
 
+fn contrast(a: u32, b: u32) -> f32 {
+    let (a, b) = (luma(a), luma(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+/// Colors a classic skin offers for its generic windows when it has no GEN.BMP / GENEX.BMP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GenericColors {
+    /// The window frame (sampled from the skin's playlist editor frame).
+    pub frame: u32,
+    /// Lists, from the skin's pledit.txt.
+    pub list_bg: u32,
+    pub list_fg: u32,
+    pub current: u32,
+    pub selected_bg: u32,
+}
+
+/// GEN.BMP and GENEX.BMP generated for a classic skin that lacks them, so the media library
+/// and preferences windows still match it: the frame in the skin's frame color with text
+/// that stays readable on it, and lists in the skin's playlist colors.
+pub fn generic_fallback(g: GenericColors) -> (Bitmap, Bitmap) {
+    let base = g.frame | 0xFF00_0000;
+    let (white, black) = (0xFFFF_FFFF, 0xFF00_0000);
+    let text = if contrast(base, white) >= contrast(base, black) {
+        white
+    } else {
+        black
+    };
+    // Raised parts lean away from the frame color, toward the text color.
+    let surface = mix(base, text, 0.12);
+    let accent = if contrast(g.current | 0xFF00_0000, base) >= 3.0 {
+        g.current | 0xFF00_0000
+    } else {
+        text
+    };
+    let palette = Palette {
+        crust: mix(base, black, 0.55),
+        base,
+        surface,
+        overlay: mix(surface, text, 0.3),
+        text,
+        subtext: mix(text, base, 0.45),
+        accent,
+        selection: g.selected_bg | 0xFF00_0000,
+        red: accent,
+        orange: accent,
+        yellow: accent,
+        green: accent,
+        cyan: accent,
+    };
+    let c = Colors::new(palette);
+    let gen_sheet = gen_bmp(&c);
+    let mut genex = genex_bmp(&c);
+    // Some skins make the playlist selection invisible (SelectedBG = NormalBG). The tree and
+    // page lists need to show what is chosen, so tint it toward the text color there.
+    let selected_bg = if contrast(g.selected_bg | 0xFF00_0000, g.list_bg | 0xFF00_0000) < 1.2 {
+        mix(g.list_bg | 0xFF00_0000, g.list_fg | 0xFF00_0000, 0.2)
+    } else {
+        g.selected_bg
+    };
+    // The list colors come from pledit.txt, as for the playlist.
+    for (slot, color) in [
+        (0, g.list_bg),
+        (1, g.list_fg),
+        (6, selected_bg),
+        (18, g.current),
+        (19, selected_bg),
+        // Selected rows keep the normal text color, as in the playlist.
+        (20, g.list_fg),
+        (21, selected_bg),
+    ] {
+        genex.set(48 + 2 * slot, 0, color | 0xFF00_0000);
+    }
+    (gen_sheet, genex)
+}
+
 fn rgb_hex(c: u32) -> String {
     format!("#{:06X}", c & 0xFF_FFFF)
 }
@@ -1310,6 +1386,46 @@ mod tests {
             Sheet::Gen => (194, 109),
             Sheet::GenEx => (130, 75),
         }
+    }
+
+    #[test]
+    fn generic_fallback_keeps_text_readable_and_uses_list_colors() {
+        for frame in [0xFFC0_C0C0, 0xFF1A_3A5A, 0xFFFF_F0F8] {
+            let g = GenericColors {
+                frame,
+                list_bg: 0xFF10_2030,
+                list_fg: 0xFF90_A0B0,
+                current: 0xFFFF_8000,
+                selected_bg: 0xFF30_4050,
+            };
+            let (gen_sheet, genex) = generic_fallback(g);
+            assert_eq!((gen_sheet.width(), gen_sheet.height()), (194, 109));
+            let colors = generic::GenExColors::from_genex(&genex);
+            assert_eq!(colors.item_background, g.list_bg);
+            assert_eq!(colors.item_foreground, g.list_fg);
+            assert_eq!(colors.list_text_selected_background, g.selected_bg);
+            assert_eq!(colors.list_text_selected, g.list_fg);
+            assert_eq!(colors.window_background, frame);
+            assert!(
+                contrast(colors.window_text, colors.window_background) >= 4.5,
+                "labels readable on {frame:08X}"
+            );
+            // The title letters can be found in the generated sheet.
+            assert!(GenLetters::scan(&gen_sheet).width("LIBRARY") > 0);
+        }
+        // An invisible playlist selection becomes visible in the generic windows.
+        let g = GenericColors {
+            frame: 0xFFF0_E0E8,
+            list_bg: 0xFFFF_FFFF,
+            list_fg: 0xFFD6_3636,
+            current: 0xFFFB_C1E3,
+            selected_bg: 0xFFFF_FFFF,
+        };
+        let colors = generic::GenExColors::from_genex(&generic_fallback(g).1);
+        assert!(
+            contrast(colors.list_text_selected_background, colors.item_background) >= 1.2,
+            "selection shows"
+        );
     }
 
     #[test]

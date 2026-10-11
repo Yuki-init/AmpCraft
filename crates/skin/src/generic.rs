@@ -212,9 +212,14 @@ impl Default for GenExColors {
 impl GenExColors {
     /// Reads the colors from GENEX.BMP (pixels at x = 48, 50, ... 90 on row 0).
     pub fn from_skin(skin: &Skin) -> Self {
-        let Some(genex) = skin.sheet(Sheet::GenEx) else {
-            return Self::default();
-        };
+        match skin.sheet(Sheet::GenEx) {
+            Some(genex) => Self::from_genex(genex),
+            None => Self::default(),
+        }
+    }
+
+    /// Reads the colors from a GENEX.BMP bitmap.
+    pub fn from_genex(genex: &Bitmap) -> Self {
         let d = Self::default();
         let at = |i: i32, fallback: u32| {
             genex

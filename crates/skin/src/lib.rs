@@ -48,6 +48,28 @@ pub struct Skin {
     warnings: Vec<String>,
 }
 
+/// The average color of `r` in `b`, if `r` lies inside it.
+fn average_color(b: &Bitmap, r: Rect) -> Option<u32> {
+    if r.x < 0 || r.y < 0 || r.x + r.w > b.width() as i32 || r.y + r.h > b.height() as i32 {
+        return None;
+    }
+    let mut sum = [0u64; 3];
+    for y in r.y..r.y + r.h {
+        for x in r.x..r.x + r.w {
+            let p = b.get(x, y)?;
+            sum[0] += u64::from((p >> 16) & 0xFF);
+            sum[1] += u64::from((p >> 8) & 0xFF);
+            sum[2] += u64::from(p & 0xFF);
+        }
+    }
+    let n = (r.w * r.h).max(1) as u64;
+    Some(rgb(
+        (sum[0] / n) as u8,
+        (sum[1] / n) as u8,
+        (sum[2] / n) as u8,
+    ))
+}
+
 impl Skin {
     /// Loads a `.wsz` / `.zip` file or an unpacked skin directory.
     pub fn load(path: &Path) -> Result<Self, SkinError> {
@@ -69,7 +91,7 @@ impl Skin {
         let mut sheets = BTreeMap::new();
         for sheet in Sheet::ALL {
             let Some(bytes) = files.get(sheet.file_name()) else {
-                // NUMS_EX is optional by design; NUMBERS is the fallback.
+                // The digit sheets are checked together below.
                 if sheet != Sheet::NumsEx {
                     warnings.push(format!("missing {}", sheet.file_name()));
                 }
@@ -85,12 +107,35 @@ impl Skin {
         if sheets.is_empty() {
             return Err(SkinError::Empty);
         }
+        // Either digit sheet is enough: NUMS_EX replaces NUMBERS when present.
+        if sheets.contains_key(&Sheet::NumsEx) {
+            warnings.retain(|w| w != "missing numbers.bmp");
+        }
         let text = |name: &str| files.get(name).map(config::decode_text);
+        let playlist_style: PlaylistStyle = text("pledit.txt")
+            .map(|t| config::parse_pledit(&t))
+            .unwrap_or_default();
+        // Classic skins often skin only the main, equalizer and playlist windows. Give the
+        // generic windows (media library, preferences) art in the skin's own colors.
+        if !sheets.contains_key(&Sheet::Gen) || !sheets.contains_key(&Sheet::GenEx) {
+            let frame = sheets
+                .get(&Sheet::Pledit)
+                .and_then(|p| average_color(p, sprites::playlist::LEFT_TILE.rect))
+                .unwrap_or(rgb(56, 55, 87));
+            let (gen_sheet, genex) = theme::generic_fallback(theme::GenericColors {
+                frame,
+                list_bg: playlist_style.normal_bg,
+                list_fg: playlist_style.normal,
+                current: playlist_style.current,
+                selected_bg: playlist_style.selected_bg,
+            });
+            warnings.retain(|w| !w.ends_with("gen.bmp") && !w.ends_with("genex.bmp"));
+            sheets.entry(Sheet::Gen).or_insert(gen_sheet);
+            sheets.entry(Sheet::GenEx).or_insert(genex);
+        }
         Ok(Self {
             sheets,
-            playlist_style: text("pledit.txt")
-                .map(|t| config::parse_pledit(&t))
-                .unwrap_or_default(),
+            playlist_style,
             vis_colors: text("viscolor.txt")
                 .map(|t| config::parse_viscolor(&t))
                 .unwrap_or(config::DEFAULT_VIS_COLORS),
