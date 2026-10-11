@@ -420,11 +420,29 @@ impl App {
         Ok(())
     }
 
+    /// Applies the skin's region.txt shapes (main and equalizer) at the current scale.
+    fn apply_shapes(&mut self) -> Result<()> {
+        let regions = self.skin.regions().clone();
+        for (panel, polys) in [(MAIN, &regions.normal), (EQ, &regions.equalizer)] {
+            let Some(id) = self.wins.iter().find(|w| w.panel == panel).map(|w| w.id) else {
+                continue;
+            };
+            let rects = amp_skin::region::shape_rects(polys, WIDTH, HEIGHT, self.scale).map(|rs| {
+                rs.into_iter()
+                    .map(|r| Rect::new(r.x, r.y, r.w, r.h))
+                    .collect::<Vec<_>>()
+            });
+            self.platform.set_shape(id, rects.as_deref())?;
+        }
+        Ok(())
+    }
+
     fn set_scale(&mut self, scale: i32) -> Result<()> {
         self.layout.rescale(self.scale, scale);
         self.scale = scale;
         self.main.set_double_size(scale > 1);
         self.sync_windows()?;
+        self.apply_shapes()?;
         self.redraw(true)
     }
 
@@ -843,6 +861,7 @@ fn main() -> Result<()> {
         w.applied = Rect::new(i32::MIN, i32::MIN, w.applied.w, w.applied.h);
     }
     app.sync_windows()?;
+    app.apply_shapes()?;
     for w in &app.wins {
         app.platform.set_visible(w.id, true)?;
     }
