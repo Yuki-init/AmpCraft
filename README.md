@@ -31,6 +31,20 @@ While playing, type `p` (pause), `n` (next), `b` (previous), `s SECS` (seek), `v
 
 Six built-in themes are generated in code from popular color schemes: `dracula`, `nord`, `gruvbox`, `solarized`, `catppuccin` and `tokyonight`. Pick one with `--skin nord` (it is remembered), or press Alt+S in the player to cycle through them. Classic `.wsz` skins still work with `--skin PATH`. `openamp-cli skin list` lists the themes and `openamp-cli skin export nord nord.wsz` writes one as a skin file other players can load. `cargo run -p amp-app --example theme_gallery -- OUT_DIR` renders all of them for a look.
 
+## Arch Linux package
+
+`scripts/build-arch-package.sh` builds a release package in an Arch container, linked against
+Arch's own FFmpeg, and writes it to `dist/`. Install it with:
+
+```
+sudo pacman -U dist/openamp-0.1.0-1-x86_64.pkg.tar.zst
+```
+
+This installs `openamp` and `openamp-cli` to `/usr/bin`, a desktop entry and an icon. Remove it
+with `sudo pacman -R openamp`. Config lives in `~/.config/openamp`, the library database in
+`~/.local/share/openamp`. Without a `--skin`, the first built-in theme is used (Alt+S cycles).
+`packaging/arch/PKGBUILD` also works with plain `makepkg -si` on an Arch machine.
+
 ## Running on the host with real audio
 
 The container cannot reach the sound server, so `scripts/host-run.sh` builds an optimized binary in the container (`--debug` for a debug build) and runs it on the host, bundling the FFmpeg libraries the host lacks under `.cache/host-bin/`:

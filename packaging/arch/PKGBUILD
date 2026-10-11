@@ -1,0 +1,46 @@
+# PKGBUILD for building OpenAMP from this repository checkout.
+# From packaging/arch: `makepkg -si` (needs network for cargo fetch), or let
+# scripts/build-arch-package.sh build it in a container and install the result with
+# `sudo pacman -U dist/openamp-*.pkg.tar.zst`.
+
+pkgname=openamp
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Classic skinnable audio player (working name)"
+arch=(x86_64)
+url="https://localhost/openamp"
+license=('LicenseRef-TBD')
+depends=(ffmpeg alsa-lib gcc-libs glibc)
+makedepends=(rustup clang pkgconf)
+optdepends=(
+  'kdialog: open-file and add-folder dialogs on KDE'
+  'zenity: open-file and add-folder dialogs elsewhere'
+  'noto-fonts-cjk: Japanese, Chinese and Korean titles'
+  'pipewire-alsa: route ALSA output through PipeWire'
+)
+options=(!lto !debug)
+
+# The repository this PKGBUILD lives in.
+_root="$(cd "$startdir/../.." && pwd)"
+
+prepare() {
+  cd "$_root"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+}
+
+build() {
+  cd "$_root"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --release --locked --offline -p amp-app --bin openamp --bin openamp-cli
+}
+
+package() {
+  cd "$_root"
+  install -Dm755 "$srcdir/target/release/openamp" "$pkgdir/usr/bin/openamp"
+  install -Dm755 "$srcdir/target/release/openamp-cli" "$pkgdir/usr/bin/openamp-cli"
+  install -Dm644 packaging/openamp.desktop "$pkgdir/usr/share/applications/openamp.desktop"
+  install -Dm644 packaging/openamp.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/openamp.svg"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/openamp/README.md"
+  install -Dm644 assets/LICENSES.md "$pkgdir/usr/share/doc/openamp/LICENSES.md"
+}
