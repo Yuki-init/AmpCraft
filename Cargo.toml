@@ -7,6 +7,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
 publish = false
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Yuki-init/OpenAMP"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

@@ -4,7 +4,14 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${OPENAMP_IMAGE:-localhost/openamp-dev:latest}"
-MUSIC_HOST_DIR="/path/to/music"
+# Personal settings (not committed): scripts/local.env, for example
+#   OPENAMP_MUSIC_HOST_DIR=/path/to/music
+if [[ -f "$REPO_ROOT/scripts/local.env" ]]; then
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/scripts/local.env"
+fi
+# A music folder to mount read-only for the opt-in library tests. Unset: none.
+MUSIC_HOST_DIR="${OPENAMP_MUSIC_HOST_DIR:-}"
 
 # Reads the pinned toolchain version from rust-toolchain.toml.
 rust_version() {
@@ -37,7 +44,7 @@ podman_args() {
     fi
     # The music drive is optional and always read-only. No relabel option on purpose:
     # relabeling would write to the drive.
-    if [[ -d "$MUSIC_HOST_DIR" ]]; then
+    if [[ -n "$MUSIC_HOST_DIR" && -d "$MUSIC_HOST_DIR" ]]; then
         RUN_ARGS+=(-v "$MUSIC_HOST_DIR":/music:ro -e WINAMP_RS_MUSIC_DIR=/music)
     fi
     if [[ -t 0 && -t 1 ]]; then

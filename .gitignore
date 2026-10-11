@@ -1,11 +1,34 @@
+# Build output and caches
 /target/
 /.cache/
-# Third-party skins without a recorded permissive license stay local only.
-/skins/
-*.wsz
-# Editor and OS noise
-*.swp
-.DS_Store
 /dist/
 /packaging/arch/src/
 /packaging/arch/pkg/
+**/*.rs.bk
+*.profraw
+perf.data*
+
+# Third-party skins without a recorded permissive license stay local only.
+/skins/
+*.wsz
+
+# Personal settings for the scripts (see scripts/common.sh)
+/scripts/local.env
+.env
+.env.*
+
+# AI assistant files (kept locally, not published)
+/CLAUDE.md
+/AGENTS.md
+/.claude/
+
+# Editors and OS noise
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.orig
+*.rej
+.DS_Store
+Thumbs.db

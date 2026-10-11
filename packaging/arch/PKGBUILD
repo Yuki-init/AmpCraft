@@ -8,8 +8,8 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="Classic skinnable audio player (working name)"
 arch=(x86_64)
-url="https://localhost/openamp"
-license=('LicenseRef-TBD')
+url="https://github.com/Yuki-init/OpenAMP"
+license=('GPL-3.0-or-later')
 depends=(ffmpeg alsa-lib gcc-libs glibc)
 makedepends=(rustup clang pkgconf)
 optdepends=(
@@ -43,4 +43,5 @@ package() {
   install -Dm644 packaging/openamp.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/openamp.svg"
   install -Dm644 README.md "$pkgdir/usr/share/doc/openamp/README.md"
   install -Dm644 assets/LICENSES.md "$pkgdir/usr/share/doc/openamp/LICENSES.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/openamp/LICENSE"
 }

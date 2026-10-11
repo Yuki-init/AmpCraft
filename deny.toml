@@ -4,7 +4,8 @@
 all-features = true
 
 [licenses]
-# Permissive licenses only. GPL-only crates need owner approval.
+# Dependencies: permissive licenses only (the project itself is GPL-3.0-or-later, which
+# all of these are compatible with). GPL-only crates need owner approval.
 allow = [
     "MIT",
     "MIT-0",
@@ -26,7 +27,7 @@ confidence-threshold = 0.9
 unused-allowed-license = "allow"
 
 [licenses.private]
-# Workspace crates are publish = false and carry no license until one is chosen.
+# Workspace crates are our own (GPL-3.0-or-later) and are not published.
 ignore = true
 
 [bans]

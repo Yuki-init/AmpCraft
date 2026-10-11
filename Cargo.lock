@@ -93,6 +93,7 @@ version = "0.1.0"
 dependencies = [
  "rtrb",
  "rustfft",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
