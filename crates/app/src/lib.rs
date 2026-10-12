@@ -6,6 +6,7 @@ pub mod dialog;
 pub mod eq_presets;
 pub mod files;
 pub mod info;
+pub mod layout;
 pub mod logging;
 pub mod metadata;
 #[cfg(target_os = "linux")]

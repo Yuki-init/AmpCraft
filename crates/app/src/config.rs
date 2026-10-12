@@ -87,6 +87,10 @@ pub struct WindowState {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WindowsConfig {
+    /// The UI scale the positions below were saved at (they are desktop pixels), so they can
+    /// be rescaled when the player starts at another scale.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scale: Option<i32>,
     pub main: Option<WindowState>,
     pub equalizer: Option<WindowState>,
     pub playlist: Option<WindowState>,

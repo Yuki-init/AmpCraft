@@ -902,6 +902,7 @@ impl App {
         c.windows.equalizer = window(EQ, None);
         c.windows.playlist = window(PL, Some(self.pl.size()));
         c.windows.library = window(LIB, Some(self.lib.size()));
+        c.windows.scale = Some(self.scale);
         c.player.volume = self.controls.volume();
         c.player.balance = self.controls.balance();
         c.player.shuffle = self.main.shuffle();
@@ -1820,27 +1821,37 @@ fn main() -> Result<()> {
             Rect::new(WIDTH, 0, lib_w, lib_h),
         ),
     ];
-    let mut layout = Layout::new();
-    layout.set_snap_distance(10 * scale);
-    layout.set_min_visible(amp_dock::Size::new(28 * scale, 14 * scale));
+    // Saved positions are desktop coordinates at the saved scale; otherwise the classic
+    // stack. Shaded windows start as their 14 px bar (the library has no shade mode).
+    let starts: Vec<amp_app::layout::PanelStart> = rects
+        .iter()
+        .map(|&(panel, _, _, r)| {
+            let state = saved(panel);
+            let h = if state.is_some_and(|s| s.shaded) && panel != LIB {
+                14
+            } else {
+                r.h
+            };
+            amp_app::layout::PanelStart {
+                id: panel,
+                default: Rect::new(r.x, r.y, r.w, h),
+                saved: state.map(|s| Point::new(s.x, s.y)),
+            }
+        })
+        .collect();
+    let layout = amp_app::layout::restore(
+        &starts,
+        config.windows.scale,
+        scale,
+        origin,
+        screens.clone(),
+        MAIN,
+    );
     let mut wins = Vec::new();
-    for (panel, title, kind, r) in rects {
-        // Saved positions are desktop coordinates; otherwise the classic stack.
+    for (panel, title, kind, _) in rects {
         let state = saved(panel);
-        // Shaded windows start as their 14 px bar (the library has no shade mode).
-        let h = if state.is_some_and(|s| s.shaded) && panel != LIB {
-            14
-        } else {
-            r.h
-        };
-        let rect = match state {
-            Some(s) => Rect::new(s.x, s.y, r.w * scale, h * scale),
-            None => Rect::new(
-                origin.x + r.x * scale,
-                origin.y + r.y * scale,
-                r.w * scale,
-                r.h * scale,
-            ),
+        let Some(rect) = layout.rect(panel) else {
+            continue;
         };
         let visible = state.map_or(panel != LIB, |s| s.visible || panel == MAIN);
         // Panels belong to the main window, so the window manager raises them with it.
@@ -1851,7 +1862,6 @@ fn main() -> Result<()> {
             kind,
             owner,
         })?;
-        layout.insert(panel, rect);
         wins.push(Win {
             id,
             panel,
@@ -1861,8 +1871,6 @@ fn main() -> Result<()> {
             hash: None,
         });
     }
-    layout.set_leader(Some(MAIN));
-    layout.set_screens(screens);
     pl.focused = false;
 
     let shown = |panel: PanelId| wins.iter().any(|w| w.panel == panel && w.visible);
