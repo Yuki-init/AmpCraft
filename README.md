@@ -102,12 +102,13 @@ with `sudo pacman -R openamp`. Config lives in `~/.config/openamp`, the library 
 
 Windows builds are cross-compiled in the dev container with MinGW (`x86_64-pc-windows-gnu`).
 The window backend is not written yet, so `openamp.exe` exits with "not implemented" for now;
-`openamp-cli.exe` needs no windows.
+`openamp-cli.exe` needs no windows. The FFmpeg DLLs ship next to the exes, with FFmpeg's
+license and a note of the exact build and its source.
 
 ```
 scripts/fetch-ffmpeg-windows.sh   # pinned LGPL FFmpeg build for Windows, into .cache/ (networked)
 scripts/check-windows.sh          # clippy for the Windows target (also run by check.sh)
-scripts/build-windows.sh          # exes plus FFmpeg DLLs in dist/windows-dev/ (--debug for a debug build)
+scripts/build-windows.sh          # exes plus FFmpeg DLLs in dist/windows/ (--debug for a debug build)
 ```
 
 ## Running on the host with real audio

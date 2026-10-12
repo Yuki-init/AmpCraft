@@ -15,24 +15,40 @@ SHA256="ba651b56d78b2a09a92d3699fd7751254e8b773dc2c3110081b7f9f4ff3b2c48"
 
 dest="$REPO_ROOT/.cache/ffmpeg-win64"
 stamp="$dest/.openamp-sha256"
+url="https://github.com/BtbN/FFmpeg-Builds/releases/download/$TAG/$NAME.zip"
 if [[ -f "$stamp" && "$(cat "$stamp")" == "$SHA256" ]]; then
     echo "Windows FFmpeg already in .cache/ffmpeg-win64 ($NAME)"
-    exit 0
+else
+    mkdir -p "$REPO_ROOT/.cache"
+    # Download, verify and extract inside the container, into a fresh directory.
+    DEV_NETWORK=1 "$REPO_ROOT/scripts/dev.sh" bash -euo pipefail -c '
+        url="$1"; name="$2"; sum="$3"
+        tmp=/work/.cache/ffmpeg-win64.tmp
+        rm -rf "$tmp" /work/.cache/ffmpeg-win64
+        mkdir -p "$tmp"
+        curl -fL --retry 3 -o "$tmp/$name.zip" "$url"
+        echo "$sum  $tmp/$name.zip" | sha256sum -c -
+        unzip -q "$tmp/$name.zip" -d "$tmp"
+        mv "$tmp/$name" /work/.cache/ffmpeg-win64
+        rm -rf "$tmp"
+        echo "$sum" > /work/.cache/ffmpeg-win64/.openamp-sha256
+    ' _ "$url" "$NAME" "$SHA256"
+    echo "Windows FFmpeg ready in .cache/ffmpeg-win64 ($NAME)"
 fi
 
-mkdir -p "$REPO_ROOT/.cache"
-url="https://github.com/BtbN/FFmpeg-Builds/releases/download/$TAG/$NAME.zip"
-# Download, verify and extract inside the container, into a fresh directory.
-DEV_NETWORK=1 "$REPO_ROOT/scripts/dev.sh" bash -euo pipefail -c '
-    url="$1"; name="$2"; sum="$3"
-    tmp=/work/.cache/ffmpeg-win64.tmp
-    rm -rf "$tmp" /work/.cache/ffmpeg-win64
-    mkdir -p "$tmp"
-    curl -fL --retry 3 -o "$tmp/$name.zip" "$url"
-    echo "$sum  $tmp/$name.zip" | sha256sum -c -
-    unzip -q "$tmp/$name.zip" -d "$tmp"
-    mv "$tmp/$name" /work/.cache/ffmpeg-win64
-    rm -rf "$tmp"
-    echo "$sum" > /work/.cache/ffmpeg-win64/.openamp-sha256
-' _ "$url" "$NAME" "$SHA256"
-echo "Windows FFmpeg ready in .cache/ffmpeg-win64 ($NAME)"
+# Where the shipped DLLs come from, for the LGPL notice next to them (scripts/build-windows.sh).
+# The version name is `git describe` output: the commit hash follows "-g".
+commit="${NAME#*-g}"
+commit="${commit%%-*}"
+cat > "$dest/.openamp-source.txt" <<EOF
+The FFmpeg DLLs in this folder (avcodec, avformat, avutil, swresample) are FFmpeg, licensed
+under the GNU Lesser General Public License version 3 (this build is configured for LGPL
+version 3; the full text is in FFMPEG-LICENSE.txt).
+They are unmodified, dynamically linked, and can be replaced with any compatible build.
+
+Build:   $NAME (LGPL variant: no --enable-gpl, no --enable-nonfree)
+Archive: $url
+SHA-256: $SHA256
+FFmpeg source: https://git.ffmpeg.org/ffmpeg.git, commit $commit
+Build scripts: https://github.com/BtbN/FFmpeg-Builds/tree/$TAG
+EOF
