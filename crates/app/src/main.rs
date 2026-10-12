@@ -1836,6 +1836,7 @@ fn main() -> Result<()> {
                 id: panel,
                 default: Rect::new(r.x, r.y, r.w, h),
                 saved: state.map(|s| Point::new(s.x, s.y)),
+                visible: state.map_or(panel != LIB, |s| s.visible || panel == MAIN),
             }
         })
         .collect();

@@ -10,12 +10,15 @@ pub struct PanelStart {
     pub default: Rect,
     /// Saved desktop position (at the saved scale), if any.
     pub saved: Option<Point>,
+    /// Hidden windows keep their place but do not dock.
+    pub visible: bool,
 }
 
 /// Builds the starting layout at `scale`. Saved positions were recorded at `saved_scale`
 /// (None for settings from before it was stored: taken as `scale`); when that differs, the
 /// layout is first rebuilt at the saved scale and then rescaled the same way the double-size
-/// toggle does it, so docked windows stay docked to the main window (`leader`).
+/// toggle does it, so docked windows stay docked to the main window (`leader`). A group that
+/// grew past the edge of its monitor that way is then moved back onto it if it fits.
 pub fn restore(
     panels: &[PanelStart],
     saved_scale: Option<i32>,
@@ -36,11 +39,76 @@ pub fn restore(
             .saved
             .unwrap_or_else(|| Point::new(origin.x + d.x * from, origin.y + d.y * from));
         layout.insert(p.id, Rect::new(pos.x, pos.y, size.0, size.1));
+        layout.set_visible(p.id, p.visible);
     }
     layout.set_leader(Some(leader));
     layout.set_screens(screens);
-    layout.rescale(from, scale);
+    if from != scale {
+        layout.rescale(from, scale);
+        keep_group_on_screen(&mut layout, leader);
+    }
     layout
+}
+
+/// Moves `leader`'s docked group so it lies within the work area of the monitor it is on
+/// (the one holding most of the leader), as far as it fits; past that the top-left corner
+/// stays visible, so title bars can be reached.
+fn keep_group_on_screen(layout: &mut Layout, leader: PanelId) {
+    let group = layout.cluster(leader);
+    let rects: Vec<(PanelId, Rect)> = group
+        .iter()
+        .filter_map(|&id| layout.rect(id).map(|r| (id, r)))
+        .collect();
+    let Some(lead) = layout.rect(leader) else {
+        return;
+    };
+    let overlap = |s: &Rect| {
+        let w = lead.right().min(s.right()) - lead.left().max(s.left());
+        let h = lead.bottom().min(s.bottom()) - lead.top().max(s.top());
+        i64::from(w.max(0)) * i64::from(h.max(0))
+    };
+    let Some(screen) = layout.screens().iter().copied().max_by_key(overlap) else {
+        return;
+    };
+    if overlap(&screen) == 0 {
+        return;
+    }
+    let left = rects
+        .iter()
+        .map(|(_, r)| r.left())
+        .min()
+        .unwrap_or(lead.left());
+    let top = rects
+        .iter()
+        .map(|(_, r)| r.top())
+        .min()
+        .unwrap_or(lead.top());
+    let right = rects
+        .iter()
+        .map(|(_, r)| r.right())
+        .max()
+        .unwrap_or(lead.right());
+    let bottom = rects
+        .iter()
+        .map(|(_, r)| r.bottom())
+        .max()
+        .unwrap_or(lead.bottom());
+    // Pull back from the far edge first, then make sure the near edge is on screen.
+    let shift = |lo: i32, hi: i32, s_lo: i32, s_hi: i32| {
+        let mut d = (s_hi - hi).min(0);
+        if lo + d < s_lo {
+            d = s_lo - lo;
+        }
+        d
+    };
+    let dx = shift(left, right, screen.left(), screen.right());
+    let dy = shift(top, bottom, screen.top(), screen.bottom());
+    if (dx, dy) == (0, 0) {
+        return;
+    }
+    for (id, r) in rects {
+        layout.set_rect(id, Rect::new(r.x + dx, r.y + dy, r.w, r.h));
+    }
 }
 
 #[cfg(test)]
@@ -62,16 +130,19 @@ mod tests {
                 id: MAIN,
                 default: Rect::new(0, 0, 275, 116),
                 saved: Some(Point::new(250, 200)),
+                visible: true,
             },
             PanelStart {
                 id: EQ,
                 default: Rect::new(0, 116, 275, 116),
                 saved: Some(Point::new(250, 432)),
+                visible: true,
             },
             PanelStart {
                 id: PL,
                 default: Rect::new(0, 232, 275, 232),
                 saved: Some(Point::new(250, 664)),
+                visible: true,
             },
         ]
     }
@@ -94,14 +165,46 @@ mod tests {
             ]
         );
         let three = restore(&saved_at_2x(), Some(2), 3, Point::new(0, 0), screen(), MAIN);
+        // 1392 px tall at 3x: moved up to fit the 1392 px work area exactly, still docked.
         assert_eq!(
             rects(&three),
             vec![
-                Rect::new(250, 200, 825, 348),
-                Rect::new(250, 548, 825, 348),
-                Rect::new(250, 896, 825, 696),
+                Rect::new(250, 0, 825, 348),
+                Rect::new(250, 348, 825, 348),
+                Rect::new(250, 696, 825, 696),
             ]
         );
+    }
+
+    #[test]
+    fn a_group_too_tall_for_the_screen_keeps_its_top_visible() {
+        let small = vec![Rect::new(0, 0, 1920, 1040)];
+        let l = restore(&saved_at_2x(), Some(2), 3, Point::new(0, 0), small, MAIN);
+        // Title bars stay reachable: the group starts at the top of the work area.
+        assert_eq!(l.rect(MAIN), Some(Rect::new(250, 0, 825, 348)));
+        assert_eq!(l.rect(EQ), Some(Rect::new(250, 348, 825, 348)));
+    }
+
+    #[test]
+    fn groups_on_a_left_hand_monitor_stay_there() {
+        let screens = vec![Rect::new(0, 0, 2560, 1392), Rect::new(-2560, 0, 2560, 1392)];
+        let mut panels = saved_at_2x();
+        for (p, y) in panels.iter_mut().zip([200, 432, 664]) {
+            p.saved = Some(Point::new(-700, y));
+        }
+        let l = restore(&panels, Some(2), 3, Point::new(0, 0), screens, MAIN);
+        // 825 wide from -700 crosses into the primary monitor: moved left onto its own.
+        assert_eq!(l.rect(MAIN), Some(Rect::new(-825, 0, 825, 348)));
+    }
+
+    #[test]
+    fn hidden_windows_do_not_count_as_docked() {
+        let mut panels = saved_at_2x();
+        panels[2].visible = false;
+        let l = restore(&panels, Some(2), 1, Point::new(0, 0), screen(), MAIN);
+        // The hidden playlist keeps its saved place (only resized).
+        assert_eq!(l.rect(PL), Some(Rect::new(250, 664, 275, 232)));
+        assert_eq!(l.rect(EQ), Some(Rect::new(250, 316, 275, 116)));
     }
 
     #[test]
