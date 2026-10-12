@@ -100,17 +100,23 @@ with `sudo pacman -R openamp`. Config lives in `~/.config/openamp`, the library 
 
 ## Windows (in progress)
 
-Windows builds are cross-compiled in the dev container with MinGW (`x86_64-pc-windows-gnu`).
-The window backend is not written yet, so `openamp.exe` exits with "not implemented" for now;
-`openamp-cli.exe` needs no windows. The FFmpeg DLLs ship next to the exes, with FFmpeg's
-license and a note of the exact build and its source.
+Windows builds are cross-compiled in the dev container with MinGW (`x86_64-pc-windows-gnu`)
+and tested under Wine. The player uses its own Win32 window backend; file dialogs, message
+boxes and media keys are not done on Windows yet. The FFmpeg DLLs ship next to the exes, with
+FFmpeg's license and a note of the exact build and its source.
 
 ```
 scripts/fetch-ffmpeg-windows.sh   # pinned LGPL FFmpeg build for Windows, into .cache/ (networked)
 scripts/check-windows.sh          # clippy for the Windows target (also run by check.sh)
+scripts/test-windows.sh           # Windows tests under Wine on a virtual display (check.sh: amp-platform)
 scripts/build-windows.sh          # exes plus FFmpeg DLLs in dist/windows/ (--debug for a debug build)
 scripts/wine-smoke.sh             # build, then run openamp-cli.exe under Wine on generated files
+scripts/package-windows.sh        # portable zip in dist/, with a test kit for a real Windows machine
 ```
+
+The zip's `test-kit/` has `run-report.ps1`, which runs the CLI and the player, takes
+screenshots and writes a report, and a `CLAUDE.md` so Claude Code on that machine can run it,
+investigate and write up the results.
 
 ## Running on the host with real audio
 
