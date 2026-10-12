@@ -2,6 +2,9 @@
 //!
 //! `openamp [--skin SKIN] [--scale 1|2|3] [--device NAME] [--audio device|null] [FILES...]`
 
+// Release builds on Windows open no console window; debug builds keep it for the log.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,7 +21,7 @@ use amp_dock::{Layout, PanelId, Rect};
 use amp_dsp::{AnalyzerReader, EqControls, Equalizer, FFT_SIZE, Spectrum};
 use amp_library::{Filter, Library, View};
 use amp_platform::AppDirs;
-use amp_platform::x11::X11Platform;
+use amp_platform::NativePlatform;
 use amp_platform::{
     CursorShape, Event, Modifiers, MouseButton, Platform, Point, Size, WindowId, WindowKind,
     WindowSpec, keys,
@@ -122,7 +125,7 @@ struct Win {
 }
 
 struct App {
-    platform: X11Platform,
+    platform: NativePlatform,
     skin: Skin,
     font: SystemFont,
     wins: Vec<Win>,
@@ -149,6 +152,7 @@ struct App {
     #[cfg(target_os = "linux")]
     mpris: Option<amp_app::mpris::Mpris>,
     /// Last position reported over MPRIS and when, to detect jumps.
+    #[cfg(target_os = "linux")]
     mpris_position: (Option<TrackId>, Duration, Instant),
     /// Paths of the rows shown in the library window, by library id.
     lib_paths: HashMap<i64, PathBuf>,
@@ -1752,7 +1756,7 @@ fn main() -> Result<()> {
         q.set_shuffle(config.player.shuffle);
     });
 
-    let mut platform = X11Platform::connect().context("connecting to the display")?;
+    let mut platform = NativePlatform::connect().context("connecting to the display")?;
     let screens = platform.screens()?;
     // A scale from the command line or a saved toggle wins; otherwise fit the screen.
     let pinned_scale = args.scale.or(config.player.scale);
@@ -1934,6 +1938,7 @@ fn main() -> Result<()> {
                 None
             }
         },
+        #[cfg(target_os = "linux")]
         mpris_position: (None, Duration::ZERO, Instant::now()),
         lib_paths: HashMap::new(),
         scan: None,
