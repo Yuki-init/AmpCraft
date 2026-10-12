@@ -82,22 +82,18 @@ openamp-<version>-windows-x64\
    look and move there.
 
    Changed since the last report, please check by hand:
-   - Japanese (and other CJK) titles: load the `テスト ü.wav` the script makes and look at
-     the playlist, the main window title and the library. They should read テスト ü, not
-     boxes.
-   - Dialogs should open over the player, not at the screen's top-left corner, and the
-     player should not react to clicks while one is open. Try Eject, playlist ADD (FILE and
-     DIR), EQ PRESETS save/load to file, Preferences "Load skin...", and File info.
-   - Folder pickers (playlist ADD > DIR, library Add folder) should be the modern Explorer
-     style, with captions "Add folder to playlist" and "Add folder to library".
-   - After a run at 2x, `--scale 3` should keep the three windows docked and move the group
-     up so the playlist's bottom edge is on screen.
-   - EQ PRESETS: hover Save so its submenu opens, press Escape (submenu closes), Escape
-     again (menu closes).
-
-   - `--scale` on the command line is now for that run only: after a `--scale 3` run, a
-     plain start goes back to the saved size (Automatic unless one was picked in
-     Preferences or with the double-size button), with the windows still docked.
+   - While any dialog is open (Eject, playlist ADD > FILE or DIR, EQ PRESETS save/load to
+     file, Preferences "Load skin...", File info with Alt+3, the EQ preset name prompt),
+     clicks on the main window, equalizer, playlist and any other player window should do
+     nothing, and none of them should come in front of the dialog. After the dialog closes,
+     all of them should work again.
+   - Every one of those dialogs, File info included, should open centred over the player's
+     windows (moved inside the screen if it would stick out), not in the screen's middle or
+     at the main window's corner. Try it with the player in a couple of places, including
+     the second monitor if there is one.
+   - Still fine from last time (quick look only): Japanese titles, the modern folder
+     pickers and their captions, `--scale 3` staying docked and on screen, Escape closing
+     the EQ PRESETS submenu.
 
    Known gap: media keys are not wired on Windows.
 
