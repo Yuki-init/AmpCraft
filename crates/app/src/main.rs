@@ -29,9 +29,9 @@ use amp_platform::{
 use amp_skin::{Bitmap, Skin};
 use amp_ui::main_window::{HEIGHT, WIDTH};
 use amp_ui::{
-    Action, AlbumRow, ArtistRow, DockDrag, EqAction, EqDown, EqWindow, Grip, LibAction, LibDown,
-    LibView, LibraryRow, LibraryWindow, MainWindow, MoveTracker, NowPlaying, PlDown, PlayState,
-    PlaylistAction, PlaylistEntry, PlaylistWindow, PointerDown, SelectMods, VisMode,
+    Action, AlbumRow, ArtistRow, DockDrag, EqAction, EqDown, EqWindow, FolderRow, Grip, LibAction,
+    LibDown, LibView, LibraryRow, LibraryWindow, MainWindow, MoveTracker, NowPlaying, PlDown,
+    PlayState, PlaylistAction, PlaylistEntry, PlaylistWindow, PointerDown, SelectMods, VisMode,
 };
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -1166,6 +1166,7 @@ impl App {
                 text,
                 artist,
                 album,
+                folder,
             } => {
                 let Some(lib) = &self.library else {
                     return Ok(());
@@ -1173,6 +1174,7 @@ impl App {
                 let filter = Filter {
                     view: match view {
                         LibView::Audio => View::Audio,
+                        LibView::Folders => View::Folders,
                         LibView::MostPlayed => View::MostPlayed,
                         LibView::RecentlyAdded => View::RecentlyAdded,
                         LibView::RecentlyPlayed => View::RecentlyPlayed,
@@ -1182,25 +1184,42 @@ impl App {
                     artist,
                     album,
                     genre: None,
+                    folder,
                 };
-                let artists = lib
-                    .artist_summary(&filter)?
-                    .into_iter()
-                    .map(|a| ArtistRow {
-                        name: a.name,
-                        albums: a.albums,
-                        tracks: a.tracks,
-                    })
-                    .collect();
-                let albums = lib
-                    .album_summary(&filter)?
-                    .into_iter()
-                    .map(|a| AlbumRow {
-                        name: a.name,
-                        year: a.year,
-                        tracks: a.tracks,
-                    })
-                    .collect();
+                // Only the panes the view shows are filled.
+                if view == LibView::Folders {
+                    let roots = self.config.library.roots(self.dirs.music.as_deref());
+                    let folders = lib
+                        .folder_summary(&filter)?
+                        .into_iter()
+                        .map(|f| FolderRow {
+                            label: amp_app::files::folder_label(&f.path, &roots),
+                            path: f.path,
+                            tracks: f.tracks,
+                        })
+                        .collect();
+                    self.lib.set_folders(folders);
+                } else {
+                    let artists = lib
+                        .artist_summary(&filter)?
+                        .into_iter()
+                        .map(|a| ArtistRow {
+                            name: a.name,
+                            albums: a.albums,
+                            tracks: a.tracks,
+                        })
+                        .collect();
+                    let albums = lib
+                        .album_summary(&filter)?
+                        .into_iter()
+                        .map(|a| AlbumRow {
+                            name: a.name,
+                            year: a.year,
+                            tracks: a.tracks,
+                        })
+                        .collect();
+                    self.lib.set_filters(artists, albums);
+                }
                 let tracks = lib.tracks(&filter, 50_000)?;
                 self.lib_paths = tracks.iter().map(|t| (t.id, t.path.clone())).collect();
                 let rows = tracks
@@ -1218,7 +1237,6 @@ impl App {
                         size: t.size,
                     })
                     .collect();
-                self.lib.set_filters(artists, albums);
                 self.lib.set_tracks(rows);
             }
             LibAction::PlayAll => {

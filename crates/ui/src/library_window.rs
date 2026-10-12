@@ -1,13 +1,15 @@
 //! The media library window, laid out like the 5.x media library in a classic skin: the
 //! generic-window frame (GEN.BMP) and GENEX colors, a "Local Media" tree on the left with a
-//! Library button under it, and on the right a search bar, Artist and Album filter panes, the
-//! track list, Play and Enqueue buttons and an item count.
+//! Library button under it, and on the right a search bar, Artist and Album filter panes (one
+//! Folder pane in the Folders view), the track list, Play and Enqueue buttons and an item
+//! count.
 //!
 //! The window holds no database: it asks for data with [`LibAction::Query`] and the app
 //! answers through [`LibraryWindow::set_filters`] and [`LibraryWindow::set_tracks`].
 //! Coordinates are unscaled; sizes grow in the classic 25 x 29 steps.
 
 use std::collections::{BTreeSet, HashMap};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use amp_dock::Point;
@@ -29,19 +31,22 @@ const GAP: i32 = 3;
 const DOUBLE_CLICK_MS: u64 = 400;
 const CACHE_LIMIT: usize = 1024;
 
-/// The tree's views, as in the 5.x "Local Media" node.
+/// The tree's views, as in the 5.x "Local Media" node, plus Folders for browsing files by
+/// where they are (useful when tags are missing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum LibView {
     #[default]
     Audio,
+    Folders,
     MostPlayed,
     RecentlyAdded,
     RecentlyPlayed,
     NeverPlayed,
 }
 
-const VIEWS: [(LibView, &str); 5] = [
+const VIEWS: [(LibView, &str); 6] = [
     (LibView::Audio, "Audio"),
+    (LibView::Folders, "Folders"),
     (LibView::MostPlayed, "Most Played"),
     (LibView::RecentlyAdded, "Recently Added"),
     (LibView::RecentlyPlayed, "Recently Played"),
@@ -80,6 +85,15 @@ pub struct AlbumRow {
     pub tracks: u64,
 }
 
+/// A row of the Folder pane: a folder that directly holds tracks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderRow {
+    pub path: PathBuf,
+    /// What the pane shows (for example the path inside its library folder).
+    pub label: String,
+    pub tracks: u64,
+}
+
 /// Track list columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Column {
@@ -101,6 +115,8 @@ pub enum LibAction {
         text: String,
         artist: Option<String>,
         album: Option<String>,
+        /// The chosen folder (Folders view only).
+        folder: Option<PathBuf>,
     },
     /// Replace the playlist with `ids` and start at `start`.
     Play {
@@ -142,11 +158,12 @@ enum Pressed {
     Button(Button),
 }
 
-/// The three scrolling lists on the right.
+/// The scrolling lists on the right. Folders replaces Artists and Albums in the Folders view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Pane {
     Artists,
     Albums,
+    Folders,
     Tracks,
 }
 
@@ -169,6 +186,8 @@ pub struct LibraryWindow {
     albums: Vec<AlbumRow>,
     artist: Option<String>,
     album: Option<String>,
+    folders: Vec<FolderRow>,
+    folder: Option<PathBuf>,
     rows: Vec<LibraryRow>,
     sort: Option<(Column, bool)>,
     selected: BTreeSet<i64>,
@@ -245,7 +264,8 @@ fn inside(r: Rect, p: Point) -> bool {
 
 fn pane_index(p: Pane) -> usize {
     match p {
-        Pane::Artists => 0,
+        // Folders is never shown with Artists, so they share a scroll offset.
+        Pane::Artists | Pane::Folders => 0,
         Pane::Albums => 1,
         Pane::Tracks => 2,
     }
@@ -305,6 +325,8 @@ impl LibraryWindow {
             albums: Vec::new(),
             artist: None,
             album: None,
+            folders: Vec::new(),
+            folder: None,
             rows: Vec::new(),
             sort: None,
             selected: BTreeSet::new(),
@@ -336,6 +358,7 @@ impl LibraryWindow {
                 &self.search,
                 &self.artist,
                 &self.album,
+                &self.folder,
             ),
             (self.scroll, &self.selected, self.sort),
             (self.pressed, self.scroll_drag.is_some()),
@@ -359,6 +382,7 @@ impl LibraryWindow {
             text: self.search.clone(),
             artist: self.artist.clone(),
             album: self.album.clone(),
+            folder: self.folder.clone(),
         }
     }
 
@@ -377,6 +401,14 @@ impl LibraryWindow {
         self.revision += 1;
         self.artists = artists;
         self.albums = albums;
+        self.clamp_scroll();
+    }
+
+    /// The Folder pane's contents (Folders view). A chosen folder no longer listed is kept,
+    /// as with [`Self::set_filters`].
+    pub fn set_folders(&mut self, folders: Vec<FolderRow>) {
+        self.revision += 1;
+        self.folders = folders;
         self.clamp_scroll();
     }
 
@@ -489,6 +521,7 @@ impl LibraryWindow {
         let filter_h = (avail * 2 / 5).max(ROW_H * 4 + 2).min(avail / 2);
         let half = ((x1 - x0) - GAP) / 2;
         let frame = match pane {
+            Pane::Folders => Rect::new(x0, top, (x1 - x0).max(0), filter_h),
             Pane::Artists => Rect::new(x0, top, half.max(0), filter_h),
             Pane::Albums => Rect::new(
                 x0 + half + GAP,
@@ -559,8 +592,25 @@ impl LibraryWindow {
             // Plus the "All" row.
             Pane::Artists => self.artists.len() + 1,
             Pane::Albums => self.albums.len() + 1,
+            Pane::Folders => self.folders.len() + 1,
             Pane::Tracks => self.rows.len(),
         }
+    }
+
+    /// The filter panes the current view shows.
+    fn filter_panes(&self) -> &'static [Pane] {
+        if self.view == LibView::Folders {
+            &[Pane::Folders]
+        } else {
+            &[Pane::Artists, Pane::Albums]
+        }
+    }
+
+    /// Every pane the current view shows, filters first.
+    fn panes(&self) -> Vec<Pane> {
+        let mut panes = self.filter_panes().to_vec();
+        panes.push(Pane::Tracks);
+        panes
     }
 
     fn max_scroll(&self, pane: Pane) -> usize {
@@ -569,7 +619,7 @@ impl LibraryWindow {
     }
 
     fn clamp_scroll(&mut self) {
-        for pane in [Pane::Artists, Pane::Albums, Pane::Tracks] {
+        for pane in self.panes() {
             let i = pane_index(pane);
             self.scroll[i] = self.scroll[i].min(self.max_scroll(pane));
         }
@@ -659,6 +709,7 @@ impl LibraryWindow {
                 self.view = *v;
                 self.artist = None;
                 self.album = None;
+                self.folder = None;
                 self.scroll = [0; 3];
                 vec![self.query()]
             }
@@ -666,8 +717,48 @@ impl LibraryWindow {
         }
     }
 
+    /// Picks the folder in row `index` of the Folder pane; row 0 is "All".
+    fn click_folder(&mut self, index: usize, now_ms: u64) -> Vec<LibAction> {
+        let folder = match index {
+            0 => None,
+            _ => match self.folders.get(index - 1) {
+                Some(f) => Some(f.path.clone()),
+                None => return Vec::new(),
+            },
+        };
+        let double = self.is_double_click(Pane::Folders, index, now_ms);
+        let mut actions = Vec::new();
+        if self.folder != folder {
+            self.folder = folder;
+            self.scroll[2] = 0;
+            actions.push(self.query());
+        }
+        if double {
+            actions.push(LibAction::PlayAll);
+        }
+        actions
+    }
+
+    /// Records a click on row `index` of a filter pane; true when it completes a double
+    /// click (which then starts over).
+    fn is_double_click(&mut self, pane: Pane, index: usize, now_ms: u64) -> bool {
+        let key = index as i64;
+        let double = self.last_click.is_some_and(|(pn, k, t)| {
+            pn == pane && k == key && now_ms.saturating_sub(t) <= DOUBLE_CLICK_MS
+        });
+        self.last_click = if double {
+            None
+        } else {
+            Some((pane, key, now_ms))
+        };
+        double
+    }
+
     /// Picks the artist (or album) in row `index` of a filter pane; row 0 is "All".
     fn click_filter(&mut self, pane: Pane, index: usize, now_ms: u64) -> Vec<LibAction> {
+        if pane == Pane::Folders {
+            return self.click_folder(index, now_ms);
+        }
         let name = match pane {
             Pane::Artists if index == 0 => None,
             Pane::Artists => match self.artists.get(index - 1) {
@@ -680,11 +771,7 @@ impl LibraryWindow {
                 None => return Vec::new(),
             },
         };
-        let key = index as i64;
-        let double = self.last_click.is_some_and(|(pn, k, t)| {
-            pn == pane && k == key && now_ms.saturating_sub(t) <= DOUBLE_CLICK_MS
-        });
-        self.last_click = Some((pane, key, now_ms));
+        let double = self.is_double_click(pane, index, now_ms);
         let changed = match pane {
             Pane::Artists if self.artist != name => {
                 self.artist = name;
@@ -704,7 +791,6 @@ impl LibraryWindow {
             actions.push(self.query());
         }
         if double {
-            self.last_click = None;
             actions.push(LibAction::PlayAll);
         }
         actions
@@ -742,7 +828,7 @@ impl LibraryWindow {
         if inside(self.tree_rect(), p) {
             return (LibDown::Handled, self.click_tree(p));
         }
-        for pane in [Pane::Artists, Pane::Albums, Pane::Tracks] {
+        for pane in self.panes() {
             let r = self.pane_rects(pane);
             if inside(r.bar, p) {
                 let top = self.handle_y(pane);
@@ -883,8 +969,10 @@ impl LibraryWindow {
 
     /// Wheel over one of the lists.
     pub fn wheel(&mut self, p: Point, up: bool) {
-        let pane = [Pane::Artists, Pane::Albums]
-            .into_iter()
+        let pane = self
+            .filter_panes()
+            .iter()
+            .copied()
             .find(|pane| inside(self.pane_rects(*pane).frame, p))
             .unwrap_or(Pane::Tracks);
         let s = &mut self.scroll[pane_index(pane)];
@@ -1089,6 +1177,122 @@ impl LibraryWindow {
         }
     }
 
+    /// A filter pane's header columns (name, x, width, alignment), its rows (the "All" row
+    /// first) and the selected row.
+    #[allow(clippy::type_complexity)]
+    fn filter_content(
+        &self,
+        pane: Pane,
+    ) -> (
+        Vec<(&'static str, i32, i32, Align)>,
+        Vec<Vec<String>>,
+        Vec<usize>,
+    ) {
+        let r = self.pane_rects(pane).header;
+        let num_w = 36.min(r.w / 4);
+        // A wide first column and right-aligned number columns after it.
+        let cols = |names: &[&'static str]| {
+            let first = (r.w - num_w * (names.len() as i32 - 1)).max(0);
+            let mut x = r.x;
+            names
+                .iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    let (w, align) = if i == 0 {
+                        (first, Align::Left)
+                    } else {
+                        (num_w, Align::Right)
+                    };
+                    let col = (*name, x, w, align);
+                    x += w;
+                    col
+                })
+                .collect::<Vec<_>>()
+        };
+        let plural =
+            |n: usize, what: &str| format!("All ({n} {what}{})", if n == 1 { "" } else { "s" });
+        // Row of the chosen item: "All" when none, nothing when it is no longer listed.
+        let selected = |pos: Option<Option<usize>>| match pos {
+            None => vec![0],
+            Some(p) => p.map(|i| vec![i + 1]).unwrap_or_default(),
+        };
+        match pane {
+            Pane::Artists => {
+                let all = vec![
+                    plural(self.artists.len(), "artist"),
+                    self.albums.len().to_string(),
+                    self.artists
+                        .iter()
+                        .map(|a| a.tracks)
+                        .sum::<u64>()
+                        .to_string(),
+                ];
+                let rows =
+                    std::iter::once(all)
+                        .chain(self.artists.iter().map(|a| {
+                            vec![a.name.clone(), a.albums.to_string(), a.tracks.to_string()]
+                        }))
+                        .collect();
+                let sel = selected(
+                    self.artist
+                        .as_ref()
+                        .map(|a| self.artists.iter().position(|x| &x.name == a)),
+                );
+                (cols(&["Artist", "Albums", "Tracks"]), rows, sel)
+            }
+            Pane::Albums => {
+                let all = vec![
+                    plural(self.albums.len(), "album"),
+                    String::new(),
+                    self.albums
+                        .iter()
+                        .map(|a| a.tracks)
+                        .sum::<u64>()
+                        .to_string(),
+                ];
+                let rows = std::iter::once(all)
+                    .chain(self.albums.iter().map(|a| {
+                        vec![
+                            a.name.clone(),
+                            a.year.map(|y| y.to_string()).unwrap_or_default(),
+                            a.tracks.to_string(),
+                        ]
+                    }))
+                    .collect();
+                let sel = selected(
+                    self.album
+                        .as_ref()
+                        .map(|a| self.albums.iter().position(|x| &x.name == a)),
+                );
+                (cols(&["Album", "Year", "Tracks"]), rows, sel)
+            }
+            Pane::Folders => {
+                let all = vec![
+                    plural(self.folders.len(), "folder"),
+                    self.folders
+                        .iter()
+                        .map(|f| f.tracks)
+                        .sum::<u64>()
+                        .to_string(),
+                ];
+                let rows = std::iter::once(all)
+                    .chain(
+                        self.folders
+                            .iter()
+                            .map(|f| vec![f.label.clone(), f.tracks.to_string()]),
+                    )
+                    .collect();
+                let sel = selected(
+                    self.folder
+                        .as_ref()
+                        .map(|p| self.folders.iter().position(|x| &x.path == p)),
+                );
+                (cols(&["Folder", "Tracks"]), rows, sel)
+            }
+            Pane::Tracks => (Vec::new(), Vec::new(), Vec::new()),
+        }
+    }
+
     pub fn render(&mut self, skin: &Skin, fallback: &mut dyn TextRenderer, scale: u32) -> Bitmap {
         let scale = scale.max(1);
         let colors = GenExColors::from_skin(skin);
@@ -1164,98 +1368,10 @@ impl LibraryWindow {
         }
 
         // Filter panes.
-        let artist_pane = self.pane_rects(Pane::Artists);
-        let album_pane = self.pane_rects(Pane::Albums);
-        let filter_cols = |r: Rect, a: &'static str, b: &'static str, c: &'static str| {
-            let (w2, w3) = (36.min(r.w / 4), 36.min(r.w / 4));
-            let w1 = (r.w - w2 - w3).max(0);
-            [
-                (a, r.x, w1, Align::Left),
-                (b, r.x + w1, w2, Align::Right),
-                (c, r.x + w1 + w2, w3, Align::Right),
-            ]
-        };
-        let artist_cols = filter_cols(artist_pane.header, "Artist", "Albums", "Tracks");
-        let album_cols = filter_cols(album_pane.header, "Album", "Year", "Tracks");
-        let artist_sel = match &self.artist {
-            None => vec![0],
-            Some(a) => self
-                .artists
-                .iter()
-                .position(|x| &x.name == a)
-                .map(|i| vec![i + 1])
-                .unwrap_or_default(),
-        };
-        let album_sel = match &self.album {
-            None => vec![0],
-            Some(a) => self
-                .albums
-                .iter()
-                .position(|x| &x.name == a)
-                .map(|i| vec![i + 1])
-                .unwrap_or_default(),
-        };
-        let cells = |cols: &[(&str, i32, i32, Align); 3]| -> Vec<(i32, i32)> {
-            cols.iter().map(|(_, x, w, _)| (*x, *w)).collect()
-        };
-        self.draw_pane(
-            &mut b,
-            &colors,
-            Pane::Artists,
-            &cells(&artist_cols),
-            &artist_sel,
-        );
-        self.draw_pane(
-            &mut b,
-            &colors,
-            Pane::Albums,
-            &cells(&album_cols),
-            &album_sel,
-        );
-        let artist_rows: Vec<[String; 3]> = std::iter::once([
-            format!(
-                "All ({} artist{})",
-                self.artists.len(),
-                if self.artists.len() == 1 { "" } else { "s" }
-            ),
-            self.albums.len().to_string(),
-            self.artists
-                .iter()
-                .map(|a| a.tracks)
-                .sum::<u64>()
-                .to_string(),
-        ])
-        .chain(
-            self.artists
-                .iter()
-                .map(|a| [a.name.clone(), a.albums.to_string(), a.tracks.to_string()]),
-        )
-        .collect();
-        let album_rows: Vec<[String; 3]> = std::iter::once([
-            format!(
-                "All ({} album{})",
-                self.albums.len(),
-                if self.albums.len() == 1 { "" } else { "s" }
-            ),
-            String::new(),
-            self.albums
-                .iter()
-                .map(|a| a.tracks)
-                .sum::<u64>()
-                .to_string(),
-        ])
-        .chain(self.albums.iter().map(|a| {
-            [
-                a.name.clone(),
-                a.year.map(|y| y.to_string()).unwrap_or_default(),
-                a.tracks.to_string(),
-            ]
-        }))
-        .collect();
-        for (pane, cols, rows, sel) in [
-            (Pane::Artists, &artist_cols, &artist_rows, &artist_sel),
-            (Pane::Albums, &album_cols, &album_rows, &album_sel),
-        ] {
+        for &pane in self.filter_panes() {
+            let (cols, rows, sel) = self.filter_content(pane);
+            let cells: Vec<(i32, i32)> = cols.iter().map(|(_, x, w, _)| (*x, *w)).collect();
+            self.draw_pane(&mut b, &colors, pane, &cells, &sel);
             let r = self.pane_rects(pane);
             if r.rows.h <= 0 {
                 continue;
@@ -1561,8 +1677,9 @@ mod tests {
     #[test]
     fn tree_views_query_and_local_media_folds() {
         let mut w = window();
-        // Rows: Local Media, Audio, Most Played, Recently Added, Recently Played, Never Played.
-        let (_, a) = w.pointer_down(tree_point(&w, 2), false, false, 0);
+        // Rows: Local Media, Audio, Folders, Most Played, Recently Added, Recently Played,
+        // Never Played.
+        let (_, a) = w.pointer_down(tree_point(&w, 3), false, false, 0);
         assert_eq!(
             a,
             vec![LibAction::Query {
@@ -1570,10 +1687,11 @@ mod tests {
                 text: String::new(),
                 artist: None,
                 album: None,
+                folder: None,
             }]
         );
         assert_eq!(w.view(), LibView::MostPlayed);
-        let (_, a) = w.pointer_down(tree_point(&w, 2), false, false, 0);
+        let (_, a) = w.pointer_down(tree_point(&w, 3), false, false, 0);
         assert!(a.is_empty(), "same view again");
         w.pointer_down(tree_point(&w, 0), false, false, 0);
         assert_eq!(w.tree_items(), vec![TreeItem::LocalMedia]);
@@ -1591,6 +1709,7 @@ mod tests {
                 text: String::new(),
                 artist: Some("Ma15".into()),
                 album: None,
+                folder: None,
             }]
         );
         let (_, a) = w.pointer_down(row_point(&w, Pane::Albums, 1), false, false, 1000);
@@ -1601,6 +1720,7 @@ mod tests {
                 text: String::new(),
                 artist: Some("Ma15".into()),
                 album: Some("Best 1".into()),
+                folder: None,
             }]
         );
         // Choosing another artist resets the album; "All" clears the artist.
@@ -1612,10 +1732,86 @@ mod tests {
                 text: String::new(),
                 artist: Some("KEIKO".into()),
                 album: None,
+                folder: None,
             }
         );
         let (_, a) = w.pointer_down(row_point(&w, Pane::Artists, 0), false, false, 3000);
         assert!(matches!(&a[0], LibAction::Query { artist: None, .. }));
+    }
+
+    fn folder_window() -> LibraryWindow {
+        let mut w = window();
+        w.pointer_down(tree_point(&w, 2), false, false, 0);
+        w.set_folders(vec![
+            FolderRow {
+                path: PathBuf::from("/m/Unsorted"),
+                label: "Unsorted".into(),
+                tracks: 7,
+            },
+            FolderRow {
+                path: PathBuf::from("/m/Rips/2003"),
+                label: "Rips/2003".into(),
+                tracks: 3,
+            },
+        ]);
+        w
+    }
+
+    #[test]
+    fn folders_view_swaps_artist_and_album_for_one_folder_pane() {
+        let mut w = window();
+        w.pointer_down(row_point(&w, Pane::Artists, 1), false, false, 0);
+        let (_, a) = w.pointer_down(tree_point(&w, 2), false, false, 10_000);
+        assert_eq!(
+            a,
+            vec![LibAction::Query {
+                view: LibView::Folders,
+                text: String::new(),
+                artist: None,
+                album: None,
+                folder: None,
+            }],
+            "the artist choice is dropped"
+        );
+        assert_eq!(w.panes(), vec![Pane::Folders, Pane::Tracks]);
+        let f = w.pane_rects(Pane::Folders).frame;
+        let t = w.pane_rects(Pane::Tracks).frame;
+        assert_eq!((f.x, f.w), (t.x, t.w), "full width");
+        let w = folder_window();
+        let (cols, rows, sel) = w.filter_content(Pane::Folders);
+        assert_eq!(cols.len(), 2);
+        assert_eq!(rows[0], ["All (2 folders)", "10"]);
+        assert_eq!(rows[2], ["Rips/2003", "3"]);
+        assert_eq!(sel, vec![0]);
+    }
+
+    #[test]
+    fn folder_pane_chooses_and_double_click_plays() {
+        let mut w = folder_window();
+        let p = row_point(&w, Pane::Folders, 2);
+        let (_, a) = w.pointer_down(p, false, false, 0);
+        assert_eq!(
+            a,
+            vec![LibAction::Query {
+                view: LibView::Folders,
+                text: String::new(),
+                artist: None,
+                album: None,
+                folder: Some(PathBuf::from("/m/Rips/2003")),
+            }]
+        );
+        assert_eq!(w.filter_content(Pane::Folders).2, vec![2]);
+        let (_, a) = w.pointer_down(p, false, false, 200);
+        assert_eq!(a, vec![LibAction::PlayAll]);
+        // "All" clears the choice; leaving the view forgets it.
+        let (_, a) = w.pointer_down(row_point(&w, Pane::Folders, 0), false, false, 5000);
+        assert!(matches!(&a[0], LibAction::Query { folder: None, .. }));
+        w.pointer_down(row_point(&w, Pane::Folders, 1), false, false, 9000);
+        w.pointer_down(tree_point(&w, 1), false, false, 20_000);
+        assert!(matches!(w.query(), LibAction::Query { folder: None, .. }));
+        let skin = coded_skin();
+        let b = folder_window().render(&skin, &mut NoFallback, 1);
+        assert_eq!(b.width() as i32, w.w);
     }
 
     #[test]
@@ -1692,6 +1888,7 @@ mod tests {
                 text: String::new(),
                 artist: None,
                 album: None,
+                folder: None,
             }]
         );
         assert!(

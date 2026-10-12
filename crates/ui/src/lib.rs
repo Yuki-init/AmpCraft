@@ -18,7 +18,7 @@ pub use dock_drag::{DockDrag, Moves};
 pub use eq_window::{EqAction, EqDown, EqWindow};
 pub use grip::Grip;
 pub use library_window::{
-    AlbumRow, ArtistRow, LibAction, LibDown, LibView, LibraryRow, LibraryWindow,
+    AlbumRow, ArtistRow, FolderRow, LibAction, LibDown, LibView, LibraryRow, LibraryWindow,
 };
 pub use main_window::{Action, Control, MainWindow, NowPlaying, PlayState, PointerDown};
 pub use menu::{Mark, MenuColors, MenuEntry, MenuEvent, MenuStack};

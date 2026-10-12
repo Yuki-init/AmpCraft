@@ -43,6 +43,27 @@ pub fn expand(paths: &[PathBuf]) -> Vec<PathBuf> {
     out
 }
 
+/// How the library's folder view names `folder`: its path from the library folder that holds
+/// it, starting with that folder's name. Folders outside every root show their full path.
+pub fn folder_label(folder: &Path, roots: &[PathBuf]) -> String {
+    roots
+        .iter()
+        .filter_map(|root| Some((root, folder.strip_prefix(root).ok()?)))
+        .max_by_key(|(root, _)| root.components().count())
+        .and_then(|(root, rel)| {
+            let name = Path::new(root.file_name()?);
+            // Joining an empty path would add a trailing separator.
+            Some(if rel.as_os_str().is_empty() {
+                name.to_path_buf()
+            } else {
+                name.join(rel)
+            })
+        })
+        .unwrap_or_else(|| folder.to_path_buf())
+        .display()
+        .to_string()
+}
+
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         log::warn!("cannot read folder {}", dir.display());
@@ -91,6 +112,21 @@ mod tests {
             .map(|p| p.strip_prefix(d).unwrap().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, ["single.ogg", "album/01.mp3", "album/02.FLAC"]);
+    }
+
+    #[test]
+    fn folder_labels_start_at_the_library_folder() {
+        let roots = [PathBuf::from("/m/Music"), PathBuf::from("/m/Music/Live")];
+        let label = |p: &str| folder_label(Path::new(p), &roots);
+        assert_eq!(label("/m/Music/Unsorted/rips"), "Music/Unsorted/rips");
+        assert_eq!(label("/m/Music"), "Music");
+        assert_eq!(label("/m/Music/Live/2003"), "Live/2003", "closest root");
+        assert_eq!(label("/elsewhere/x"), "/elsewhere/x");
+        assert_eq!(
+            label("/m/MusicOther"),
+            "/m/MusicOther",
+            "whole components only"
+        );
     }
 
     #[test]
