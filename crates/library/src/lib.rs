@@ -296,11 +296,34 @@ fn like_escape(s: &str) -> String {
         .replace('_', "\\_")
 }
 
+/// `std::fs::canonicalize`, but without the `\\?\` prefix Windows adds to every result when
+/// the path works without it (drive and network paths), so stored and shown paths look
+/// normal. Rust's file APIs add the prefix again by themselves when a path is too long.
+pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    let full = std::fs::canonicalize(path)?;
+    Ok(full
+        .to_str()
+        .and_then(strip_verbatim)
+        .map_or(full.clone(), PathBuf::from))
+}
+
+/// `\\?\C:\x` to `C:\x` and `\\?\UNC\server\share` to `\\server\share`; None for anything
+/// else (other verbatim forms keep their prefix).
+fn strip_verbatim(p: &str) -> Option<String> {
+    let rest = p.strip_prefix(r"\\?\")?;
+    if let Some(unc) = rest.strip_prefix(r"UNC\") {
+        return Some(format!(r"\\{unc}"));
+    }
+    let b = rest.as_bytes();
+    (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\')
+        .then(|| rest.to_owned())
+}
+
 /// Drops roots that are inside other roots, so nested folders are scanned once.
 fn distinct_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
     let norm: Vec<PathBuf> = roots
         .iter()
-        .map(|r| std::fs::canonicalize(r).unwrap_or_else(|_| r.clone()))
+        .map(|r| canonicalize(r).unwrap_or_else(|_| r.clone()))
         .collect();
     let mut out: Vec<PathBuf> = Vec::new();
     for r in &norm {
@@ -672,6 +695,22 @@ impl Library {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn verbatim_prefix_is_dropped_where_it_is_not_needed() {
+        // Regression: the Windows build showed library folders as \\?\C:\...
+        assert_eq!(
+            strip_verbatim(r"\\?\C:\Users\u\Music").as_deref(),
+            Some(r"C:\Users\u\Music")
+        );
+        assert_eq!(
+            strip_verbatim(r"\\?\UNC\nas\music\a").as_deref(),
+            Some(r"\\nas\music\a")
+        );
+        assert_eq!(strip_verbatim(r"\\?\Volume{1234}\x"), None);
+        assert_eq!(strip_verbatim(r"C:\already\plain"), None);
+        assert_eq!(strip_verbatim("/home/u/Music"), None);
+    }
 
     /// Tags derived from the file name; counts reads; fails for names containing "bad".
     struct FakeTags {
