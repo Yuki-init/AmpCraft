@@ -42,6 +42,27 @@ pub fn chosen_files(buffer: &[u16]) -> Vec<PathBuf> {
     }
 }
 
+/// A screen rectangle as (left, top, right, bottom), right and bottom exclusive.
+pub type Area = (i32, i32, i32, i32);
+
+/// The smallest area holding all of `areas`, or None when there are none.
+pub fn union(areas: impl IntoIterator<Item = Area>) -> Option<Area> {
+    areas
+        .into_iter()
+        .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)))
+}
+
+/// The top-left corner that centres a `w` x `h` window over `over`, moved as needed to
+/// lie inside `work` (the monitor's work area). A window bigger than `work` keeps its
+/// top-left corner, and so its title bar, on screen.
+pub fn centered(over: Area, w: i32, h: i32, work: Area) -> (i32, i32) {
+    let fit = |centre: i32, len: i32, lo: i32, hi: i32| (centre - len / 2).min(hi - len).max(lo);
+    (
+        fit((over.0 + over.2) / 2, w, work.0, work.2),
+        fit((over.1 + over.3) / 2, h, work.1, work.3),
+    )
+}
+
 /// Control ids in the text prompt.
 pub const ID_OK: u16 = 1;
 pub const ID_CANCEL: u16 = 2;
@@ -167,6 +188,34 @@ mod tests {
             ]
         );
         assert!(chosen_files(&[0, 0]).is_empty(), "cancelled");
+    }
+
+    #[test]
+    fn dialogs_are_centred_over_the_player() {
+        // The docked 2x stack from the third Windows report, on a 2560x1392 work area.
+        let work = (0, 0, 2560, 1392);
+        let player = union([
+            (250, 0, 800, 232),
+            (250, 232, 800, 464),
+            (250, 464, 800, 928),
+        ]);
+        assert_eq!(player, Some((250, 0, 800, 928)));
+        let player = player.unwrap();
+        // A message box fits beside the player's centre.
+        assert_eq!(centered(player, 400, 200, work), (325, 364));
+        // The 1200x720 file dialog would start left of the screen: it stops at the edge.
+        assert_eq!(centered(player, 1200, 720, work), (0, 104));
+        // Near the bottom-right corner it is pulled back on screen.
+        assert_eq!(
+            centered((2400, 1300, 2560, 1392), 400, 200, work),
+            (2160, 1192)
+        );
+        // Too big for the screen: the top-left corner stays visible.
+        assert_eq!(centered(player, 3000, 2000, work), (0, 0));
+        // A monitor left of the primary one.
+        let left = (-2560, 0, 0, 1392);
+        assert_eq!(centered((-700, 0, -150, 928), 400, 200, left), (-625, 364));
+        assert_eq!(union([]), None);
     }
 
     #[test]

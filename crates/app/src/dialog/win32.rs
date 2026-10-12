@@ -1,35 +1,45 @@
 //! Dialogs from the Windows common dialogs (file open and save), the shell's folder picker,
 //! `MessageBoxW`, and a small dialog built from an in-memory template for text prompts.
 //! Each runs modally on its own thread, with COM initialized there as the shell requires.
+//! While one is open the player's windows ignore input, and it opens centred over them.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::mpsc::Sender;
 
-use windows_sys::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromRect,
+};
 use windows_sys::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoCreateInstance,
     CoInitializeEx, CoTaskMemFree, CoUninitialize,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Controls::Dialogs::{
     CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW, OFN_ALLOWMULTISELECT, OFN_EXPLORER,
     OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST,
     OPENFILENAMEW,
 };
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled};
 use windows_sys::Win32::UI::Shell::{
     BFFM_INITIALIZED, BFFM_SETSELECTIONW, BIF_NEWDIALOGSTYLE, BIF_RETURNONLYFSDIRS, BROWSEINFOW,
     FileOpenDialog, SHBrowseForFolderW, SHCreateItemFromParsingName, SHGetPathFromIDListW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DLGTEMPLATE, DialogBoxIndirectParamW, EndDialog, GetDlgItemTextW, MB_ICONINFORMATION, MB_OK,
-    MB_SETFOREGROUND, MessageBoxW, SendDlgItemMessageW, SendMessageW, SetDlgItemTextW, WM_COMMAND,
-    WM_INITDIALOG,
+    CallNextHookEx, DLGTEMPLATE, DialogBoxIndirectParamW, EndDialog, EnumThreadWindows,
+    GetDlgItemTextW, GetWindowRect, GetWindowThreadProcessId, HCBT_ACTIVATE, HHOOK,
+    IsWindowVisible, MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MessageBoxW, SWP_NOACTIVATE,
+    SWP_NOSIZE, SWP_NOZORDER, SendDlgItemMessageW, SendMessageW, SetDlgItemTextW, SetWindowPos,
+    SetWindowsHookExW, UnhookWindowsHookEx, WH_CBT, WM_COMMAND, WM_INITDIALOG,
 };
 use windows_sys::core::{GUID, HRESULT};
 
-use super::win32_data::{ID_CANCEL, ID_EDIT, ID_OK, chosen_files, filter, prompt_template, wide};
+use super::win32_data::{
+    Area, ID_CANCEL, ID_EDIT, ID_OK, centered, chosen_files, filter, prompt_template, union, wide,
+};
 use crate::files::AUDIO_EXTENSIONS;
 
 /// `EM_SETSEL` (CommCtrl.h): select a range of an edit control's text.
@@ -51,12 +61,173 @@ fn owner() -> HWND {
     OWNER.load(Ordering::Relaxed) as HWND
 }
 
-/// Runs `work` on a named thread with COM initialized, sending its result on `done`.
+/// The player's windows held disabled while a dialog is open. Windows disables only a
+/// dialog's owner, the main window, so the equalizer, playlist and other panels are disabled
+/// here too: otherwise a click on one raises it over the dialog and acts on it.
+struct Blocked {
+    /// Windows this guard disabled (as integers so the guard can move to the dialog's
+    /// thread); enabled again on drop.
+    disabled: Vec<isize>,
+    /// Where the player's visible windows are, to centre the dialog over.
+    area: Option<Area>,
+}
+
+impl Blocked {
+    /// Disables every visible, enabled window of `owner`'s thread except `owner` itself,
+    /// which the dialog disables and, when it closes, enables and activates.
+    fn player(owner: HWND) -> Blocked {
+        let mut windows: Vec<HWND> = Vec::new();
+        if !owner.is_null() {
+            extern "system" fn collect(hwnd: HWND, data: LPARAM) -> i32 {
+                // SAFETY: `data` is the `windows` vector below, alive for the enumeration.
+                let windows = unsafe { &mut *(data as *mut Vec<HWND>) };
+                windows.push(hwnd);
+                1
+            }
+            // SAFETY: reads the thread that made `owner`, then lists its top-level windows
+            // into `windows` through `collect`.
+            unsafe {
+                let thread = GetWindowThreadProcessId(owner, std::ptr::null_mut());
+                EnumThreadWindows(thread, Some(collect), &mut windows as *mut _ as LPARAM);
+            }
+        }
+        // SAFETY: plain queries on windows that exist (just enumerated).
+        windows.retain(|&w| unsafe { IsWindowVisible(w) } != 0);
+        let area = union(windows.iter().filter_map(|&w| window_area(w)));
+        let disabled = windows
+            .into_iter()
+            // SAFETY: as above.
+            .filter(|&w| w != owner && unsafe { IsWindowEnabled(w) } != 0)
+            .map(|w| {
+                // SAFETY: disables one of the player's windows; undone on drop.
+                unsafe { EnableWindow(w, 0) };
+                w as isize
+            })
+            .collect();
+        Blocked { disabled, area }
+    }
+}
+
+impl Drop for Blocked {
+    fn drop(&mut self) {
+        for &w in &self.disabled {
+            // SAFETY: enables a window this guard disabled; harmless if it is gone by now.
+            unsafe { EnableWindow(w as HWND, 1) };
+        }
+    }
+}
+
+fn window_area(hwnd: HWND) -> Option<Area> {
+    let mut r = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    // SAFETY: `r` is a valid out-pointer.
+    (unsafe { GetWindowRect(hwnd, &mut r) } != 0).then_some((r.left, r.top, r.right, r.bottom))
+}
+
+thread_local! {
+    /// The area the next dialog on this thread is centred over; taken by the first one.
+    static CENTRE_OVER: Cell<Option<Area>> = const { Cell::new(None) };
+    static CENTRE_HOOK: Cell<HHOOK> = const { Cell::new(std::ptr::null_mut()) };
+}
+
+/// Moves the first window activated on this thread (the dialog, whichever API made it)
+/// over the player, kept inside the work area of the monitor nearest the player.
+extern "system" fn centre_hook(code: i32, wp: WPARAM, lp: LPARAM) -> isize {
+    if code == HCBT_ACTIVATE as i32
+        && let Some(over) = CENTRE_OVER.with(Cell::take)
+    {
+        centre(wp as HWND, over);
+    }
+    // SAFETY: passes the event on, as every hook procedure must.
+    unsafe { CallNextHookEx(CENTRE_HOOK.with(Cell::get), code, wp, lp) }
+}
+
+fn centre(dialog: HWND, over: Area) {
+    let Some(own) = window_area(dialog) else {
+        return;
+    };
+    let rect = RECT {
+        left: over.0,
+        top: over.1,
+        right: over.2,
+        bottom: over.3,
+    };
+    // SAFETY: MONITORINFO is plain data; cbSize is set before the call.
+    let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+    info.cbSize = size_of::<MONITORINFO>() as u32;
+    // SAFETY: a valid rectangle and out-pointer; NEAREST always yields a monitor.
+    if unsafe { GetMonitorInfoW(MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST), &mut info) } == 0
+    {
+        return;
+    }
+    let w = &info.rcWork;
+    let (x, y) = centered(
+        over,
+        own.2 - own.0,
+        own.3 - own.1,
+        (w.left, w.top, w.right, w.bottom),
+    );
+    // SAFETY: moves the dialog window being activated on this thread.
+    unsafe {
+        SetWindowPos(
+            dialog,
+            std::ptr::null_mut(),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+    };
+}
+
+/// Centres the next dialog on this thread over `area` until dropped.
+struct Centring(HHOOK);
+
+impl Centring {
+    fn over(area: Option<Area>) -> Centring {
+        let Some(area) = area else {
+            return Centring(std::ptr::null_mut());
+        };
+        CENTRE_OVER.with(|c| c.set(Some(area)));
+        // SAFETY: a hook for this thread only, removed on drop; the procedure only touches
+        // this thread's state.
+        let hook = unsafe {
+            SetWindowsHookExW(
+                WH_CBT,
+                Some(centre_hook),
+                std::ptr::null_mut(),
+                GetCurrentThreadId(),
+            )
+        };
+        CENTRE_HOOK.with(|h| h.set(hook));
+        Centring(hook)
+    }
+}
+
+impl Drop for Centring {
+    fn drop(&mut self) {
+        CENTRE_OVER.with(|c| c.set(None));
+        if !self.0.is_null() {
+            // SAFETY: removes the hook `over` installed.
+            unsafe { UnhookWindowsHookEx(self.0) };
+        }
+    }
+}
+
+/// Runs `work` on a named thread with COM initialized, sending its result on `done`. The
+/// player's windows are disabled until it returns, and the dialog opens centred over them.
 fn spawn<T: Send + 'static>(
     name: &str,
     work: impl FnOnce() -> T + Send + 'static,
     done: Sender<T>,
 ) -> bool {
+    // On the player's thread, so its windows are disabled before it handles another click.
+    let blocked = Blocked::player(owner());
     std::thread::Builder::new()
         .name(name.into())
         .spawn(move || {
@@ -67,11 +238,14 @@ fn spawn<T: Send + 'static>(
                     (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as _,
                 )
             };
+            let centring = Centring::over(blocked.area);
             let result = work();
+            drop(centring);
             if hr >= 0 {
                 // SAFETY: pairs the successful CoInitializeEx on this thread.
                 unsafe { CoUninitialize() };
             }
+            drop(blocked);
             let _ = done.send(result);
         })
         .is_ok()
@@ -530,8 +704,101 @@ pub fn show_message(title: &str, text: impl FnOnce() -> String + Send + 'static)
 mod tests {
     use super::*;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateDialogIndirectParamW, DestroyWindow, GetDlgItem,
+        CreateDialogIndirectParamW, CreateWindowExW, DestroyWindow, GetDlgItem, SW_SHOW,
+        ShowWindow, WS_POPUP, WS_VISIBLE,
     };
+
+    /// Held by tests that make windows. Activating a window on one test thread while
+    /// another thread's window is active waits on the other thread, which a test thread does
+    /// not answer while it runs, so these take turns.
+    static WINDOWS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn windows_lock() -> std::sync::MutexGuard<'static, ()> {
+        WINDOWS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn popup(x: i32, y: i32, w: i32, h: i32) -> HWND {
+        let class = wide("STATIC");
+        // SAFETY: test code; a plain popup of a system class, destroyed by the test.
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                class.as_ptr(),
+                std::ptr::null(),
+                WS_POPUP | WS_VISIBLE,
+                x,
+                y,
+                w,
+                h,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                GetModuleHandleW(std::ptr::null()),
+                std::ptr::null(),
+            )
+        };
+        assert!(!hwnd.is_null());
+        hwnd
+    }
+
+    fn enabled(hwnd: HWND) -> bool {
+        // SAFETY: test code; a plain query.
+        unsafe { IsWindowEnabled(hwnd) != 0 }
+    }
+
+    #[test]
+    fn the_players_other_windows_ignore_input_while_a_dialog_is_open() {
+        let _windows = windows_lock();
+        // Regression: only the main window (the owner) was disabled, so a click on the
+        // playlist raised it over the dialog and opened its ADD menu.
+        let main = popup(250, 0, 550, 232);
+        let eq = popup(250, 232, 550, 232);
+        let playlist = popup(250, 464, 550, 464);
+        let off = popup(900, 0, 100, 100);
+        // SAFETY: test code.
+        unsafe { EnableWindow(off, 0) };
+        let blocked = Blocked::player(main);
+        assert!(enabled(main), "the dialog disables its owner itself");
+        assert!(!enabled(eq) && !enabled(playlist));
+        assert_eq!(blocked.area, Some((250, 0, 1000, 928)));
+        drop(blocked);
+        assert!(enabled(main) && enabled(eq) && enabled(playlist));
+        assert!(!enabled(off), "a window disabled before stays disabled");
+        // SAFETY: test code.
+        unsafe {
+            for w in [main, eq, playlist, off] {
+                DestroyWindow(w);
+            }
+        }
+    }
+
+    #[test]
+    fn dialogs_open_centred_over_the_player() {
+        let _windows = windows_lock();
+        let template = prompt_template("Save preset", "Name:");
+        PROMPT.with(|p| *p.borrow_mut() = (wide("Rock"), None));
+        let centring = Centring::over(Some((100, 100, 700, 600)));
+        // SAFETY: test code; the template lives across the call and the dialog is destroyed.
+        let dlg = unsafe {
+            CreateDialogIndirectParamW(
+                GetModuleHandleW(std::ptr::null()),
+                template.as_ptr().cast::<DLGTEMPLATE>(),
+                std::ptr::null_mut(),
+                Some(prompt_proc),
+                0,
+            )
+        };
+        assert!(!dlg.is_null());
+        // Showing it activates it, as DialogBox does for a modal one.
+        // SAFETY: test code; `dlg` is live.
+        unsafe { ShowWindow(dlg, SW_SHOW) };
+        drop(centring);
+        let (l, t, r, b) = window_area(dlg).unwrap();
+        // Centred on (400, 350), give or take a pixel of rounding.
+        assert!(((l + r) / 2 - 400).abs() <= 1, "x {l}..{r}");
+        assert!(((t + b) / 2 - 350).abs() <= 1, "y {t}..{b}");
+        // SAFETY: test code.
+        unsafe { DestroyWindow(dlg) };
+    }
 
     #[test]
     fn the_modern_folder_picker_is_set_up_through_its_vtable() {
@@ -557,6 +824,7 @@ mod tests {
 
     #[test]
     fn the_prompt_template_makes_a_dialog() {
+        let _windows = windows_lock();
         let template = prompt_template("Save preset", "Name:");
         PROMPT.with(|p| *p.borrow_mut() = (wide("Rock"), None));
         // SAFETY: test code; the template lives across the call and the dialog is destroyed.
