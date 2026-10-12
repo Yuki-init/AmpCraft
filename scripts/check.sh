@@ -15,6 +15,9 @@ scripts/dev.sh cargo clippy --workspace --all-targets -- -D warnings
 echo "==> Windows lint"
 scripts/check-windows.sh
 
+echo "==> Windows platform tests (Win32 backend under Wine)"
+scripts/test-windows.sh -p amp-platform
+
 if [[ -f .cache/ffmpeg-win64/include/libavcodec/avcodec.h ]]; then
     echo "==> Windows smoke test (openamp-cli.exe under Wine)"
     scripts/build-windows.sh --debug >/dev/null
