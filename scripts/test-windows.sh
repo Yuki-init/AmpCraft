@@ -18,6 +18,8 @@ timeout 1200 scripts/dev.sh env "${env_args[@]}" bash -euo pipefail -c '
     mkdir -p /tmp/xdg
     export XDG_RUNTIME_DIR=/tmp/xdg LANG=C.UTF-8
     export WINEPREFIX=/work/.cache/wine-prefix WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml="
+    # Test binaries that link FFmpeg find its DLLs here.
+    if [[ -d .cache/ffmpeg-win64/bin ]]; then export WINEPATH="Z:\\work\\.cache\\ffmpeg-win64\\bin"; fi
     # One display for the whole run; Wine draws its windows there.
     xvfb-run -a -s "-screen 0 1280x1024x24" \
         cargo test --target x86_64-pc-windows-gnu "$@" 2> >(grep -v "XDG_RUNTIME_DIR\|syswow64" >&2)

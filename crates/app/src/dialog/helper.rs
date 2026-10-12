@@ -1,5 +1,5 @@
-//! Native file picking through the desktop's dialog helper (kdialog or zenity), run on a
-//! thread so the UI keeps drawing while the dialog is open.
+//! Dialogs through the desktop's dialog helper (kdialog or zenity), for Linux and other
+//! systems without a Win32 implementation.
 
 use std::path::PathBuf;
 use std::process::Command;
