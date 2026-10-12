@@ -19,6 +19,9 @@ echo "==> Windows platform tests (Win32 backend under Wine)"
 scripts/test-windows.sh -p amp-platform
 
 if [[ -f .cache/ffmpeg-win64/include/libavcodec/avcodec.h ]]; then
+    echo "==> Windows dialog tests (under Wine)"
+    scripts/test-windows.sh -p amp-app --lib dialog
+
     echo "==> Windows smoke test (openamp-cli.exe under Wine)"
     scripts/build-windows.sh --debug >/dev/null
     scripts/wine-smoke.sh --no-build

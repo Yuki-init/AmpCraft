@@ -23,7 +23,9 @@ timeout 600 scripts/dev.sh bash -euo pipefail -c '
     # Wine converts arguments and file names with the Unix locale; without UTF-8 they mangle.
     export LANG=C.UTF-8
     # A prefix of its own under .cache, kept between runs (first start takes a few seconds).
-    export WINEPREFIX=/work/.cache/wine-prefix WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml="
+    export WINEPREFIX=/work/.cache/wine-prefix WINEARCH=win64 WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml="
+    # Set the prefix up completely first (see scripts/test-windows.sh).
+    if [[ ! -f "$WINEPREFIX/system.reg" ]]; then wineboot -i >/dev/null 2>&1; wineserver -w; fi
     # Wine sees / as drive Z:, so the app gets Windows paths for its folders.
     winpath() { printf "Z:%s" "$(realpath -m "$1" | tr / "\\\\")"; }
     export OPENAMP_CONFIG_DIR="$(winpath "$work/config")"
