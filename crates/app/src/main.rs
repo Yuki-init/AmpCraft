@@ -53,7 +53,8 @@ struct Args {
     /// .wsz file or a skin folder. Defaults to the last one used. Alt+S cycles the themes.
     #[arg(long)]
     skin: Option<PathBuf>,
-    /// Integer UI scale. Defaults to the last one chosen, else one picked from the screen.
+    /// Integer UI scale, for this run only. Defaults to the size chosen in Preferences or with
+    /// the double-size button, else one picked from the screen.
     #[arg(long, value_parser = clap::value_parser!(u8).range(1..=3))]
     scale: Option<u8>,
     /// Audio output device (see `openamp-cli devices`).
@@ -167,8 +168,9 @@ struct App {
     drag: DockDrag,
     tracker: MoveTracker<WindowId>,
     scale: i32,
-    /// The scale came from the user (flag or toggle) rather than the screen.
-    scale_pinned: bool,
+    /// The size the user chose (double-size toggle or Preferences), saved across restarts;
+    /// None means automatic. A `--scale` flag applies to one run only and does not change it.
+    chosen_scale: Option<u8>,
     /// Saved and auto-load equalizer presets, and answers from the preset name prompt.
     eq_presets: amp_app::eq_presets::PresetStore,
     names: (Sender<Vec<String>>, Receiver<Vec<String>>),
@@ -601,8 +603,9 @@ impl App {
             Action::SetPlaylistVisible(on) => self.set_panel_visible(PL, on)?,
             Action::ToggleDoubleSize => {
                 // Choosing a size by hand sticks across restarts.
-                self.scale_pinned = true;
-                self.set_scale(if self.scale == 1 { 2 } else { 1 })?
+                let next = if self.scale == 1 { 2 } else { 1 };
+                self.chosen_scale = Some(next as u8);
+                self.set_scale(next)?
             }
             Action::ToggleShade => self.toggle_shade(MAIN)?,
             Action::Minimize => {
@@ -911,7 +914,7 @@ impl App {
         c.player.balance = self.controls.balance();
         c.player.shuffle = self.main.shuffle();
         c.player.repeat = self.main.repeat();
-        c.player.scale = self.scale_pinned.then_some(self.scale as u8);
+        c.player.scale = self.chosen_scale;
         c.player.skin = self.skin_path.clone();
         c.player.show_remaining = self.main.show_remaining();
         c.player.always_on_top = self.main.always_on_top();
@@ -1755,7 +1758,8 @@ fn main() -> Result<()> {
     let mut platform = NativePlatform::connect().context("connecting to the display")?;
     let screens = platform.screens()?;
     // A scale from the command line or a saved toggle wins; otherwise fit the screen.
-    let pinned_scale = args.scale.or(config.player.scale);
+    let saved_scale_choice = config.player.scale;
+    let pinned_scale = args.scale.or(saved_scale_choice);
     let scale = i32::from(
         pinned_scale
             .unwrap_or_else(|| {
@@ -1955,7 +1959,7 @@ fn main() -> Result<()> {
         drag: DockDrag::new(),
         tracker: MoveTracker::new(),
         scale,
-        scale_pinned: pinned_scale.is_some(),
+        chosen_scale: saved_scale_choice,
         eq_presets: amp_app::eq_presets::PresetStore::load(&eq::presets_file(&dirs)),
         names: mpsc::channel(),
         prefs: amp_ui::PrefsWindow::new(),

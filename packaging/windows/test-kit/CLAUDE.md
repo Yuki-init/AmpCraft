@@ -95,8 +95,11 @@ openamp-<version>-windows-x64\
    - EQ PRESETS: hover Save so its submenu opens, press Escape (submenu closes), Escape
      again (menu closes).
 
-   Still the same as before: a `--scale` given on the command line is remembered for later
-   starts. Known gap: media keys are not wired on Windows.
+   - `--scale` on the command line is now for that run only: after a `--scale 3` run, a
+     plain start goes back to the saved size (Automatic unless one was picked in
+     Preferences or with the double-size button), with the windows still docked.
+
+   Known gap: media keys are not wired on Windows.
 
 5. Write `report\REPORT.md`:
    - Environment: Windows version, display scale(s), monitors, sound device (from
