@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Builds a portable Windows zip: dist/openamp-<version>-windows-x64.zip with the player, the
+# Builds a portable Windows zip: dist/openamp-<version>-<release>-windows-x64.zip (release is
+# the Arch package's pkgrel, so both platforms share one number) with the player, the
 # CLI, the FFmpeg DLLs and notices, the license, a README and the test kit
 # (packaging/windows/). Nothing to install: unzip and run openamp.exe.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 cd "$REPO_ROOT"
 
 version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
+release=$(sed -n 's/^pkgrel=\([0-9]*\)$/\1/p' packaging/arch/PKGBUILD)
 commit=$(git rev-parse --short HEAD)
 dirty=$(git status --porcelain --untracked-files=no | grep -q . && echo "+changes" || true)
-name="openamp-$version-windows-x64"
+name="openamp-$version-$release-windows-x64"
 
 scripts/build-windows.sh
 
@@ -20,7 +22,7 @@ cp dist/windows/openamp.exe dist/windows/openamp-cli.exe dist/windows/*.dll \
 cp LICENSE "$stage/LICENSE.txt"
 cp packaging/windows/README.txt "$stage/"
 cp -r packaging/windows/test-kit "$stage/test-kit"
-printf 'OpenAMP %s, commit %s%s, built %s\n' "$version" "$commit" "$dirty" "$(date -u +%Y-%m-%dT%H:%MZ)" \
+printf 'OpenAMP %s-%s, commit %s%s, built %s\n' "$version" "$release" "$commit" "$dirty" "$(date -u +%Y-%m-%dT%H:%MZ)" \
     > "$stage/BUILD.txt"
 
 # Windows tools expect CRLF in text files.

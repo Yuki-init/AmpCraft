@@ -90,7 +90,7 @@ drive).
 Arch's own FFmpeg, and writes it to `dist/`. Install it with:
 
 ```
-sudo pacman -U dist/openamp-0.1.0-1-x86_64.pkg.tar.zst
+sudo pacman -U dist/openamp-0.1.0-2-x86_64.pkg.tar.zst
 ```
 
 This installs `openamp` and `openamp-cli` to `/usr/bin`, a desktop entry and an icon. Remove it

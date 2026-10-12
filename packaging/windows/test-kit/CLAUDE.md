@@ -9,7 +9,7 @@ the developers can act on.
 ## Layout
 
 ```
-openamp-<version>-windows-x64\
+openamp-<version>-<release>-windows-x64\
   openamp.exe, openamp-cli.exe     the player and its headless CLI
   av*.dll, swresample-*.dll        FFmpeg (LGPL), loaded from this folder
   test-kit\                        you are here
