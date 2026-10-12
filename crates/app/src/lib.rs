@@ -12,4 +12,5 @@ pub mod metadata;
 pub mod mpris;
 pub mod null_sink;
 pub mod perf;
+pub mod skins;
 pub mod system_font;

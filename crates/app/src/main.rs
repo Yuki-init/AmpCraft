@@ -6,7 +6,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -783,17 +783,13 @@ impl App {
     /// Switches to the next built-in theme (from a non-theme skin, the first one).
     /// Which built-in theme is in use, if any.
     fn theme_index(&self) -> Option<usize> {
-        use amp_skin::theme::{THEMES, find};
         self.skin_path
-            .as_ref()
-            .and_then(|p| p.to_str())
-            .and_then(find)
-            .and_then(|t| THEMES.iter().position(|x| x.id == t.id))
+            .as_deref()
+            .and_then(amp_app::skins::theme_index)
     }
 
     fn next_theme(&mut self) -> Result<()> {
-        let n = amp_skin::theme::THEMES.len();
-        self.set_theme(self.theme_index().map_or(0, |i| (i + 1) % n))
+        self.set_theme(amp_app::skins::next_theme(self.skin_path.as_deref()))
     }
 
     fn set_theme(&mut self, index: usize) -> Result<()> {
@@ -1605,22 +1601,16 @@ impl App {
 }
 
 /// Loads a skin: a built-in theme name (`dracula`, `nord`, ...), a .wsz file or a skin folder.
-/// Without one, the local base skin when present, else the first built-in theme.
-fn find_skin(arg: Option<PathBuf>) -> Result<Skin> {
-    let path = match arg {
-        Some(p) => p,
-        None => {
-            let p = PathBuf::from("skins/base-2.91.wsz");
-            if !p.is_file() {
-                return Ok(amp_skin::theme::THEMES[0].skin());
-            }
-            p
-        }
-    };
+/// Without one, the local base skin when present, else the first built-in theme. Returns the
+/// skin and what it was loaded from.
+fn find_skin(arg: Option<PathBuf>) -> Result<(Skin, PathBuf)> {
+    let path = arg.unwrap_or_else(|| {
+        amp_app::skins::default_skin(Path::new(amp_app::skins::LOCAL_BASE_SKIN).is_file())
+    });
     if !path.exists()
         && let Some(theme) = path.to_str().and_then(amp_skin::theme::find)
     {
-        return Ok(theme.skin());
+        return Ok((theme.skin(), path));
     }
     let skin = Skin::load(&path).with_context(|| {
         let themes: Vec<&str> = amp_skin::theme::THEMES.iter().map(|t| t.id).collect();
@@ -1633,7 +1623,7 @@ fn find_skin(arg: Option<PathBuf>) -> Result<Skin> {
     for w in skin.warnings() {
         log::warn!("skin: {w}");
     }
-    Ok(skin)
+    Ok((skin, path))
 }
 
 fn main() -> Result<()> {
@@ -1654,10 +1644,11 @@ fn main() -> Result<()> {
     });
     let skin_path = args.skin.clone().or_else(|| config.player.skin.clone());
     let (skin, skin_path) = match find_skin(skin_path.clone()) {
-        Ok(s) => (s, skin_path),
+        Ok((s, p)) => (s, Some(p)),
         Err(e) if args.skin.is_none() && skin_path.is_some() => {
             log::warn!("saved skin unavailable ({e}); trying the default");
-            (find_skin(None)?, None)
+            let (s, p) = find_skin(None)?;
+            (s, Some(p))
         }
         Err(e) => return Err(e),
     };
