@@ -81,15 +81,22 @@ openamp-<version>-windows-x64\
    if the machine has several monitors or a display scale above 100%, how the windows
    look and move there.
 
-   New in this build, please check by hand: the Windows file dialogs and message boxes.
-   Eject (open files, several at once), playlist ADD, Preferences (Ctrl+P) "load skin file"
-   with a .wsz (the owner can supply one; if none, export one first with
-   `openamp-cli.exe skin export nord report\sandbox\nord.wsz`), the media library's Add
-   folder, EQ PRESETS load/save to file and "save preset" (a small name prompt), and File
-   info (I button, or right-click menu) as a message box. Cancel each once too. Also check
-   that after a run at one scale, starting with `--scale 1` and `--scale 3` keeps the three
-   windows docked (fixed since the last report), and that the first Alt+S changes the theme.
-   Known gap: media keys are not wired on Windows.
+   Changed since the last report, please check by hand:
+   - Japanese (and other CJK) titles: load the `テスト ü.wav` the script makes and look at
+     the playlist, the main window title and the library. They should read テスト ü, not
+     boxes.
+   - Dialogs should open over the player, not at the screen's top-left corner, and the
+     player should not react to clicks while one is open. Try Eject, playlist ADD (FILE and
+     DIR), EQ PRESETS save/load to file, Preferences "Load skin...", and File info.
+   - Folder pickers (playlist ADD > DIR, library Add folder) should be the modern Explorer
+     style, with captions "Add folder to playlist" and "Add folder to library".
+   - After a run at 2x, `--scale 3` should keep the three windows docked and move the group
+     up so the playlist's bottom edge is on screen.
+   - EQ PRESETS: hover Save so its submenu opens, press Escape (submenu closes), Escape
+     again (menu closes).
+
+   Still the same as before: a `--scale` given on the command line is remembered for later
+   starts. Known gap: media keys are not wired on Windows.
 
 5. Write `report\REPORT.md`:
    - Environment: Windows version, display scale(s), monitors, sound device (from
