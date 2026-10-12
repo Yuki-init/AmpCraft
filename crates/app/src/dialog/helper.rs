@@ -61,8 +61,9 @@ pub fn pick_files(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
     spawned.is_ok()
 }
 
-/// Asks the user for one folder. Sends the choice (or nothing) on `done`.
-pub fn pick_folder(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
+/// Asks the user for one folder, with `title` as the caption. Sends the choice (or nothing)
+/// on `done`.
+pub fn pick_folder(title: &str, start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
     let helper = ["kdialog", "zenity"]
         .into_iter()
         .find(|h| which(h).is_some());
@@ -77,14 +78,11 @@ pub fn pick_folder(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
     if helper == "kdialog" {
         cmd.arg("--getexistingdirectory")
             .arg(&start)
-            .args(["--title", "Add folder to library"]);
+            .args(["--title", title]);
     } else {
-        cmd.args([
-            "--file-selection",
-            "--directory",
-            "--title=Add folder to library",
-        ])
-        .arg(format!("--filename={}/", start.display()));
+        cmd.args(["--file-selection", "--directory"])
+            .arg(format!("--title={title}"))
+            .arg(format!("--filename={}/", start.display()));
     }
     std::thread::Builder::new()
         .name("folder-dialog".into())

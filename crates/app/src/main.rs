@@ -651,7 +651,11 @@ impl App {
             PlaylistAction::AddFolder => {
                 if self.pick_mode.is_none() {
                     let start = self.last_dir.clone().or_else(|| self.dirs.music.clone());
-                    if amp_app::dialog::pick_folder(start, self.picks.0.clone()) {
+                    if amp_app::dialog::pick_folder(
+                        "Add folder to playlist",
+                        start,
+                        self.picks.0.clone(),
+                    ) {
                         self.pick_mode = Some(PickMode::Append);
                     }
                 }
@@ -1873,6 +1877,10 @@ fn main() -> Result<()> {
         });
     }
     pl.focused = false;
+    #[cfg(windows)]
+    if let Some(hwnd) = wins.first().and_then(|w| platform.hwnd(w.id)) {
+        amp_app::dialog::set_owner(hwnd);
+    }
 
     let shown = |panel: PanelId| wins.iter().any(|w| w.panel == panel && w.visible);
     let mut main = MainWindow::new();

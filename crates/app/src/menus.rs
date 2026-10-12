@@ -557,7 +557,11 @@ impl App {
             }
             MenuCmd::LibraryAddFolder => {
                 let start = self.dirs.music.clone();
-                amp_app::dialog::pick_folder(start, self.folder_picks.0.clone());
+                amp_app::dialog::pick_folder(
+                    "Add folder to library",
+                    start,
+                    self.folder_picks.0.clone(),
+                );
             }
             MenuCmd::LibraryRescan => self.start_scan(),
             MenuCmd::PlPlay => {

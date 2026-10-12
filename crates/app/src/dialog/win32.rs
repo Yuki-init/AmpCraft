@@ -4,11 +4,13 @@
 
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::mpsc::Sender;
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows_sys::Win32::System::Com::{
-    COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoTaskMemFree, CoUninitialize,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoCreateInstance,
+    CoInitializeEx, CoTaskMemFree, CoUninitialize,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::Dialogs::{
@@ -18,13 +20,14 @@ use windows_sys::Win32::UI::Controls::Dialogs::{
 };
 use windows_sys::Win32::UI::Shell::{
     BFFM_INITIALIZED, BFFM_SETSELECTIONW, BIF_NEWDIALOGSTYLE, BIF_RETURNONLYFSDIRS, BROWSEINFOW,
-    SHBrowseForFolderW, SHGetPathFromIDListW,
+    FileOpenDialog, SHBrowseForFolderW, SHCreateItemFromParsingName, SHGetPathFromIDListW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     DLGTEMPLATE, DialogBoxIndirectParamW, EndDialog, GetDlgItemTextW, MB_ICONINFORMATION, MB_OK,
     MB_SETFOREGROUND, MessageBoxW, SendDlgItemMessageW, SendMessageW, SetDlgItemTextW, WM_COMMAND,
     WM_INITDIALOG,
 };
+use windows_sys::core::{GUID, HRESULT};
 
 use super::win32_data::{ID_CANCEL, ID_EDIT, ID_OK, chosen_files, filter, prompt_template, wide};
 use crate::files::AUDIO_EXTENSIONS;
@@ -34,6 +37,19 @@ const EM_SETSEL: u32 = 0x00B1;
 /// Room for a long multiple selection.
 const FILE_BUFFER: usize = 64 * 1024;
 const MAX_PATH: usize = 260;
+
+/// The player's main window, which owns every dialog: they open centred over it and keep
+/// it from taking input while open, as in the classic player. 0 until set.
+static OWNER: AtomicIsize = AtomicIsize::new(0);
+
+/// Makes `hwnd` (the main window) the owner of dialogs opened from now on.
+pub fn set_owner(hwnd: HWND) {
+    OWNER.store(hwnd as isize, Ordering::Relaxed);
+}
+
+fn owner() -> HWND {
+    OWNER.load(Ordering::Relaxed) as HWND
+}
 
 /// Runs `work` on a named thread with COM initialized, sending its result on `done`.
 fn spawn<T: Send + 'static>(
@@ -83,6 +99,7 @@ fn file_dialog(req: FileRequest) -> Vec<PathBuf> {
     // SAFETY: OPENFILENAMEW is plain data; zero is "unset" for every field.
     let mut ofn: OPENFILENAMEW = unsafe { std::mem::zeroed() };
     ofn.lStructSize = size_of::<OPENFILENAMEW>() as u32;
+    ofn.hwndOwner = owner();
     ofn.lpstrFilter = req.filter.as_ptr();
     ofn.nFilterIndex = 1;
     ofn.lpstrFile = buffer.as_mut_ptr();
@@ -216,14 +233,176 @@ extern "system" fn browse_callback(hwnd: HWND, msg: u32, _lp: LPARAM, data: LPAR
     0
 }
 
-/// Asks the user for one folder. Sends the choice (or nothing) on `done`.
-pub fn pick_folder(start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
+// The modern folder picker is the common item dialog (IFileOpenDialog) in folder mode.
+// windows-sys has no COM method wrappers, so the vtable entries used are declared here, in
+// their order in shobjidl.h; slots that are not called are plain pointers.
+
+const IID_IFILEOPENDIALOG: GUID = GUID::from_u128(0xd57c7288_d4ad_4768_be02_9d969532d960);
+const IID_ISHELLITEM: GUID = GUID::from_u128(0x43826d1e_e718_42ee_bc55_a1e261c37bfe);
+const FOS_PICKFOLDERS: u32 = 0x20;
+const FOS_FORCEFILESYSTEM: u32 = 0x40;
+const SIGDN_FILESYSPATH: u32 = 0x8005_8000;
+
+type Com = *mut core::ffi::c_void;
+
+#[repr(C)]
+struct FileDialogVtbl {
+    query_interface: usize,
+    add_ref: usize,
+    release: unsafe extern "system" fn(Com) -> u32,
+    // IModalWindow
+    show: unsafe extern "system" fn(Com, HWND) -> HRESULT,
+    // IFileDialog
+    set_file_types: usize,
+    set_file_type_index: usize,
+    get_file_type_index: usize,
+    advise: usize,
+    unadvise: usize,
+    set_options: unsafe extern "system" fn(Com, u32) -> HRESULT,
+    get_options: unsafe extern "system" fn(Com, *mut u32) -> HRESULT,
+    set_default_folder: usize,
+    set_folder: unsafe extern "system" fn(Com, Com) -> HRESULT,
+    get_folder: usize,
+    get_current_selection: usize,
+    set_file_name: usize,
+    get_file_name: usize,
+    set_title: unsafe extern "system" fn(Com, *const u16) -> HRESULT,
+    set_ok_button_label: usize,
+    set_file_name_label: usize,
+    get_result: unsafe extern "system" fn(Com, *mut Com) -> HRESULT,
+}
+
+#[repr(C)]
+struct ShellItemVtbl {
+    query_interface: usize,
+    add_ref: usize,
+    release: unsafe extern "system" fn(Com) -> u32,
+    bind_to_handler: usize,
+    get_parent: usize,
+    get_display_name: unsafe extern "system" fn(Com, u32, *mut *mut u16) -> HRESULT,
+}
+
+/// A COM object's vtable: the object's first field points at it.
+///
+/// # Safety
+/// `obj` must be a live object whose interface is laid out as `V`.
+unsafe fn vtbl<'a, V>(obj: Com) -> &'a V {
+    // SAFETY: guaranteed by the caller.
+    unsafe { &**(obj as *const *const V) }
+}
+
+/// A COM object released on drop.
+struct Owned(Com);
+
+impl Drop for Owned {
+    fn drop(&mut self) {
+        // SAFETY: an Owned always holds a live object; Release is the third slot of every
+        // interface (IUnknown's), which ShellItemVtbl declares.
+        unsafe { (vtbl::<ShellItemVtbl>(self.0).release)(self.0) };
+    }
+}
+
+/// Creates the common item dialog in folder mode with `title` and, if it exists, `start`.
+fn new_folder_dialog(title: &[u16], start: Option<&[u16]>) -> Option<Owned> {
+    let mut obj: Com = std::ptr::null_mut();
+    // SAFETY: standard COM creation with valid GUIDs and an out-pointer; COM is initialized
+    // on this thread by `spawn` (or the test).
+    let hr = unsafe {
+        CoCreateInstance(
+            &FileOpenDialog,
+            std::ptr::null_mut(),
+            CLSCTX_INPROC_SERVER,
+            &IID_IFILEOPENDIALOG,
+            &mut obj,
+        )
+    };
+    if hr < 0 || obj.is_null() {
+        return None;
+    }
+    let dialog = Owned(obj);
+    // SAFETY: `dialog` is a live IFileOpenDialog.
+    let v = unsafe { vtbl::<FileDialogVtbl>(dialog.0) };
+    let mut options = 0;
+    // SAFETY: a live object, a valid out-pointer, and a NUL-terminated title.
+    unsafe {
+        if (v.get_options)(dialog.0, &mut options) < 0
+            || (v.set_options)(dialog.0, options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM) < 0
+        {
+            return None;
+        }
+        (v.set_title)(dialog.0, title.as_ptr());
+    }
+    if let Some(start) = start {
+        let mut item: Com = std::ptr::null_mut();
+        // SAFETY: `start` is NUL-terminated; SetFolder takes its own reference to the item.
+        let hr = unsafe {
+            SHCreateItemFromParsingName(
+                start.as_ptr(),
+                std::ptr::null_mut(),
+                &IID_ISHELLITEM,
+                &mut item,
+            )
+        };
+        if hr >= 0 && !item.is_null() {
+            let item = Owned(item);
+            // SAFETY: both objects are live.
+            unsafe { (v.set_folder)(dialog.0, item.0) };
+        }
+    }
+    Some(dialog)
+}
+
+/// Shows the modern folder picker. None when it is not available (the older one is used
+/// then); otherwise the chosen folder, or nothing when cancelled.
+fn modern_folder_dialog(title: &[u16], start: Option<&[u16]>) -> Option<Vec<PathBuf>> {
+    let dialog = new_folder_dialog(title, start)?;
+    // SAFETY: `dialog` is a live IFileOpenDialog.
+    let v = unsafe { vtbl::<FileDialogVtbl>(dialog.0) };
+    // SAFETY: a modal call on this thread; the owner is null or the player's main window.
+    if unsafe { (v.show)(dialog.0, owner()) } < 0 {
+        // Cancelled or closed: an answer, not a reason to fall back.
+        return Some(Vec::new());
+    }
+    let mut item: Com = std::ptr::null_mut();
+    // SAFETY: a live object and a valid out-pointer.
+    if unsafe { (v.get_result)(dialog.0, &mut item) } < 0 || item.is_null() {
+        return Some(Vec::new());
+    }
+    let item = Owned(item);
+    // SAFETY: `item` is a live IShellItem.
+    let iv = unsafe { vtbl::<ShellItemVtbl>(item.0) };
+    let mut name: *mut u16 = std::ptr::null_mut();
+    // SAFETY: a live object and a valid out-pointer; the shell allocates `name`.
+    let hr = unsafe { (iv.get_display_name)(item.0, SIGDN_FILESYSPATH, &mut name) };
+    if hr < 0 || name.is_null() {
+        return Some(Vec::new());
+    }
+    // SAFETY: `name` is a NUL-terminated UTF-16 string from the shell; read to the end.
+    let path = unsafe {
+        let mut len = 0;
+        while *name.add(len) != 0 {
+            len += 1;
+        }
+        String::from_utf16_lossy(std::slice::from_raw_parts(name, len))
+    };
+    // SAFETY: frees the string the shell allocated for us.
+    unsafe { CoTaskMemFree(name as *const core::ffi::c_void) };
+    Some(vec![PathBuf::from(path)])
+}
+
+/// Asks the user for one folder, with `title` as the caption. Sends the choice (or nothing)
+/// on `done`. Uses the modern folder picker, or the older tree dialog where it is missing.
+pub fn pick_folder(title: &str, start: Option<PathBuf>, done: Sender<Vec<PathBuf>>) -> bool {
+    let title = wide(title);
     let work = move || {
-        let title = wide("Add folder to library");
         let start = start.map(|p| wide(&p.to_string_lossy()));
+        if let Some(chosen) = modern_folder_dialog(&title, start.as_deref()) {
+            return chosen;
+        }
+        log::info!("modern folder picker unavailable; using the older one");
         let mut name = vec![0u16; MAX_PATH];
         let info = BROWSEINFOW {
-            hwndOwner: std::ptr::null_mut(),
+            hwndOwner: owner(),
             pidlRoot: std::ptr::null_mut(),
             pszDisplayName: name.as_mut_ptr(),
             lpszTitle: title.as_ptr(),
@@ -307,7 +486,7 @@ pub fn ask_text(title: &str, label: &str, default: &str, done: Sender<Vec<String
             DialogBoxIndirectParamW(
                 GetModuleHandleW(std::ptr::null()),
                 template.as_ptr().cast::<DLGTEMPLATE>(),
-                std::ptr::null_mut(),
+                owner(),
                 Some(prompt_proc),
                 0,
             )
@@ -336,7 +515,7 @@ pub fn show_message(title: &str, text: impl FnOnce() -> String + Send + 'static)
             // SAFETY: both strings are NUL-terminated and outlive the modal call.
             unsafe {
                 MessageBoxW(
-                    std::ptr::null_mut(),
+                    owner(),
                     text.as_ptr(),
                     title.as_ptr(),
                     MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND,
@@ -353,6 +532,28 @@ mod tests {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateDialogIndirectParamW, DestroyWindow, GetDlgItem,
     };
+
+    #[test]
+    fn the_modern_folder_picker_is_set_up_through_its_vtable() {
+        // SAFETY: test code; COM is initialized for this thread and uninitialized at the end.
+        unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as _) };
+        let start = wide(&std::env::temp_dir().to_string_lossy());
+        let dialog = new_folder_dialog(&wide("Add folder to playlist"), Some(&start))
+            .expect("the common item dialog is available");
+        // SAFETY: `dialog` is a live IFileOpenDialog.
+        let v = unsafe { vtbl::<FileDialogVtbl>(dialog.0) };
+        let mut options = 0;
+        // Reading the options back through another slot shows the layout lines up.
+        // SAFETY: a live object and a valid out-pointer.
+        assert!(unsafe { (v.get_options)(dialog.0, &mut options) } >= 0);
+        assert_eq!(
+            options & (FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM),
+            FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM
+        );
+        drop(dialog);
+        // SAFETY: pairs the CoInitializeEx above.
+        unsafe { CoUninitialize() };
+    }
 
     #[test]
     fn the_prompt_template_makes_a_dialog() {
