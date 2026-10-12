@@ -12,8 +12,11 @@ scripts/dev.sh cargo fmt --all -- --check
 echo "==> clippy"
 scripts/dev.sh cargo clippy --workspace --all-targets -- -D warnings
 
-echo "==> cross-OS lint (platform crate for Windows and macOS)"
-scripts/dev.sh cargo clippy --quiet -p amp-platform --target x86_64-pc-windows-gnu --target aarch64-apple-darwin -- -D warnings
+echo "==> Windows lint"
+scripts/check-windows.sh
+
+echo "==> macOS lint (platform crate)"
+scripts/dev.sh cargo clippy --quiet -p amp-platform --target aarch64-apple-darwin -- -D warnings
 
 echo "==> cargo deny (licenses, bans, sources)"
 scripts/dev.sh cargo deny --offline check licenses bans sources

@@ -98,6 +98,18 @@ with `sudo pacman -R openamp`. Config lives in `~/.config/openamp`, the library 
 `~/.local/share/openamp`. Without a `--skin`, the first built-in theme is used (Alt+S cycles).
 `packaging/arch/PKGBUILD` also works with plain `makepkg -si` on an Arch machine.
 
+## Windows (in progress)
+
+Windows builds are cross-compiled in the dev container with MinGW (`x86_64-pc-windows-gnu`).
+The window backend is not written yet, so `openamp.exe` exits with "not implemented" for now;
+`openamp-cli.exe` needs no windows.
+
+```
+scripts/fetch-ffmpeg-windows.sh   # pinned LGPL FFmpeg build for Windows, into .cache/ (networked)
+scripts/check-windows.sh          # clippy for the Windows target (also run by check.sh)
+scripts/build-windows.sh          # exes plus FFmpeg DLLs in dist/windows-dev/ (--debug for a debug build)
+```
+
 ## Running on the host with real audio
 
 The container cannot reach the sound server, so `scripts/host-run.sh` builds an optimized binary in the container (`--debug` for a debug build) and runs it on the host, bundling the FFmpeg libraries the host lacks under `.cache/host-bin/`:
