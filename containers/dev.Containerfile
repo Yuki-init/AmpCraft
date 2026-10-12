@@ -34,4 +34,8 @@ RUN test -n "$RUST_VERSION" \
     && rm -rf /usr/local/cargo/registry /usr/local/cargo/git \
     && chmod -R a+rwX /usr/local/rustup /usr/local/cargo
 
+# Wine (64-bit only) runs the cross-built Windows exes for smoke tests (scripts/wine-smoke.sh).
+RUN apt-get update && apt-get install -y --no-install-recommends wine wine64 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /work

@@ -109,6 +109,7 @@ license and a note of the exact build and its source.
 scripts/fetch-ffmpeg-windows.sh   # pinned LGPL FFmpeg build for Windows, into .cache/ (networked)
 scripts/check-windows.sh          # clippy for the Windows target (also run by check.sh)
 scripts/build-windows.sh          # exes plus FFmpeg DLLs in dist/windows/ (--debug for a debug build)
+scripts/wine-smoke.sh             # build, then run openamp-cli.exe under Wine on generated files
 ```
 
 ## Running on the host with real audio
