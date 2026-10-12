@@ -26,6 +26,9 @@ pub enum OutputError {
     NotFound(String),
     #[error("audio backend error: {0}")]
     Backend(#[from] cpal::Error),
+    /// The backend panicked instead of returning an error (see [`guarded`]).
+    #[error("the system audio service is unavailable: {0}")]
+    Unavailable(String),
 }
 
 pub type Result<T, E = OutputError> = std::result::Result<T, E>;
@@ -126,6 +129,21 @@ where
     }
 }
 
+/// Runs a call into cpal, turning a panic into [`OutputError::Unavailable`]. cpal's WASAPI host
+/// unwraps the result of creating its device enumerator, so on a Windows system without a
+/// working audio endpoint service every device query panics.
+fn guarded<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|payload| {
+        let msg = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "the audio backend panicked".to_owned());
+        log::warn!("audio backend panicked: {msg}");
+        Err(OutputError::Unavailable(msg))
+    })
+}
+
 fn device_id(device: &cpal::Device) -> Option<String> {
     device.id().ok().map(|id| id.id().to_owned())
 }
@@ -136,15 +154,17 @@ fn device_name(device: &cpal::Device) -> Option<String> {
 
 /// Available outputs as (id, human-readable name) pairs.
 pub fn list_outputs() -> Result<Vec<(String, String)>> {
-    let host = cpal::default_host();
-    Ok(host
-        .output_devices()?
-        .filter_map(|d| {
-            let id = device_id(&d)?;
-            let name = device_name(&d).unwrap_or_else(|| id.clone());
-            Some((id, name))
-        })
-        .collect())
+    guarded(|| {
+        let host = cpal::default_host();
+        Ok(host
+            .output_devices()?
+            .filter_map(|d| {
+                let id = device_id(&d)?;
+                let name = device_name(&d).unwrap_or_else(|| id.clone());
+                Some((id, name))
+            })
+            .collect())
+    })
 }
 
 /// An output device and the stream configuration chosen for it.
@@ -167,14 +187,20 @@ impl OutputDevice {
     /// The system default output, at its default rate. Prefers an `f32` stereo configuration
     /// at that rate when the device offers one.
     pub fn default_output() -> Result<Self> {
-        let host = cpal::default_host();
-        let device = host.default_output_device().ok_or(OutputError::NoDevice)?;
-        Self::from_device(device)
+        guarded(|| {
+            let host = cpal::default_host();
+            let device = host.default_output_device().ok_or(OutputError::NoDevice)?;
+            Self::from_device(device)
+        })
     }
 
     /// The output whose id equals `query`, or failing that, whose id or name contains it
     /// (case-insensitive). See [`list_outputs`] for what is available.
     pub fn named(query: &str) -> Result<Self> {
+        guarded(|| Self::find(query))
+    }
+
+    fn find(query: &str) -> Result<Self> {
         let host = cpal::default_host();
         let mut devices: Vec<cpal::Device> = host.output_devices()?.collect();
         let wanted = query.to_lowercase();
@@ -342,6 +368,20 @@ impl AudioOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backend_panics_become_errors() {
+        // cpal's WASAPI host unwraps COM errors (for example when the audio endpoint service
+        // is missing); those must reach the caller as errors, not take the process down.
+        let r: Result<()> = guarded(|| panic!("CoCreateInstance failed"));
+        match r {
+            Err(OutputError::Unavailable(msg)) => assert!(msg.contains("CoCreateInstance")),
+            other => panic!("expected Unavailable, got {other:?}"),
+        }
+        let formatted: Result<()> = guarded(|| panic!("code {}", 7));
+        assert!(matches!(formatted, Err(OutputError::Unavailable(m)) if m == "code 7"));
+        assert_eq!(guarded(|| Ok(5)).ok(), Some(5));
+    }
 
     #[test]
     fn gains_center_and_extremes() {
