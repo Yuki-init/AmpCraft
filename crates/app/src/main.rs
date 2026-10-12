@@ -2,8 +2,11 @@
 //!
 //! `openamp [--skin SKIN] [--scale 1|2|3] [--device NAME] [--audio device|null] [FILES...]`
 
+// Release builds on Windows open no console window; debug builds keep it for the log.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -18,7 +21,7 @@ use amp_dock::{Layout, PanelId, Rect};
 use amp_dsp::{AnalyzerReader, EqControls, Equalizer, FFT_SIZE, Spectrum};
 use amp_library::{Filter, Library, View};
 use amp_platform::AppDirs;
-use amp_platform::x11::X11Platform;
+use amp_platform::NativePlatform;
 use amp_platform::{
     CursorShape, Event, Modifiers, MouseButton, Platform, Point, Size, WindowId, WindowKind,
     WindowSpec, keys,
@@ -26,9 +29,9 @@ use amp_platform::{
 use amp_skin::{Bitmap, Skin};
 use amp_ui::main_window::{HEIGHT, WIDTH};
 use amp_ui::{
-    Action, AlbumRow, ArtistRow, DockDrag, EqAction, EqDown, EqWindow, Grip, LibAction, LibDown,
-    LibView, LibraryRow, LibraryWindow, MainWindow, MoveTracker, NowPlaying, PlDown, PlayState,
-    PlaylistAction, PlaylistEntry, PlaylistWindow, PointerDown, SelectMods, VisMode,
+    Action, AlbumRow, ArtistRow, DockDrag, EqAction, EqDown, EqWindow, FolderRow, Grip, LibAction,
+    LibDown, LibView, LibraryRow, LibraryWindow, MainWindow, MoveTracker, NowPlaying, PlDown,
+    PlayState, PlaylistAction, PlaylistEntry, PlaylistWindow, PointerDown, SelectMods, VisMode,
 };
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -50,7 +53,8 @@ struct Args {
     /// .wsz file or a skin folder. Defaults to the last one used. Alt+S cycles the themes.
     #[arg(long)]
     skin: Option<PathBuf>,
-    /// Integer UI scale. Defaults to the last one chosen, else one picked from the screen.
+    /// Integer UI scale, for this run only. Defaults to the size chosen in Preferences or with
+    /// the double-size button, else one picked from the screen.
     #[arg(long, value_parser = clap::value_parser!(u8).range(1..=3))]
     scale: Option<u8>,
     /// Audio output device (see `openamp-cli devices`).
@@ -122,7 +126,7 @@ struct Win {
 }
 
 struct App {
-    platform: X11Platform,
+    platform: NativePlatform,
     skin: Skin,
     font: SystemFont,
     wins: Vec<Win>,
@@ -149,6 +153,7 @@ struct App {
     #[cfg(target_os = "linux")]
     mpris: Option<amp_app::mpris::Mpris>,
     /// Last position reported over MPRIS and when, to detect jumps.
+    #[cfg(target_os = "linux")]
     mpris_position: (Option<TrackId>, Duration, Instant),
     /// Paths of the rows shown in the library window, by library id.
     lib_paths: HashMap<i64, PathBuf>,
@@ -163,8 +168,9 @@ struct App {
     drag: DockDrag,
     tracker: MoveTracker<WindowId>,
     scale: i32,
-    /// The scale came from the user (flag or toggle) rather than the screen.
-    scale_pinned: bool,
+    /// The size the user chose (double-size toggle or Preferences), saved across restarts;
+    /// None means automatic. A `--scale` flag applies to one run only and does not change it.
+    chosen_scale: Option<u8>,
     /// Saved and auto-load equalizer presets, and answers from the preset name prompt.
     eq_presets: amp_app::eq_presets::PresetStore,
     names: (Sender<Vec<String>>, Receiver<Vec<String>>),
@@ -597,8 +603,9 @@ impl App {
             Action::SetPlaylistVisible(on) => self.set_panel_visible(PL, on)?,
             Action::ToggleDoubleSize => {
                 // Choosing a size by hand sticks across restarts.
-                self.scale_pinned = true;
-                self.set_scale(if self.scale == 1 { 2 } else { 1 })?
+                let next = if self.scale == 1 { 2 } else { 1 };
+                self.chosen_scale = Some(next as u8);
+                self.set_scale(next)?
             }
             Action::ToggleShade => self.toggle_shade(MAIN)?,
             Action::Minimize => {
@@ -647,7 +654,11 @@ impl App {
             PlaylistAction::AddFolder => {
                 if self.pick_mode.is_none() {
                     let start = self.last_dir.clone().or_else(|| self.dirs.music.clone());
-                    if amp_app::dialog::pick_folder(start, self.picks.0.clone()) {
+                    if amp_app::dialog::pick_folder(
+                        "Add folder to playlist",
+                        start,
+                        self.picks.0.clone(),
+                    ) {
                         self.pick_mode = Some(PickMode::Append);
                     }
                 }
@@ -779,17 +790,13 @@ impl App {
     /// Switches to the next built-in theme (from a non-theme skin, the first one).
     /// Which built-in theme is in use, if any.
     fn theme_index(&self) -> Option<usize> {
-        use amp_skin::theme::{THEMES, find};
         self.skin_path
-            .as_ref()
-            .and_then(|p| p.to_str())
-            .and_then(find)
-            .and_then(|t| THEMES.iter().position(|x| x.id == t.id))
+            .as_deref()
+            .and_then(amp_app::skins::theme_index)
     }
 
     fn next_theme(&mut self) -> Result<()> {
-        let n = amp_skin::theme::THEMES.len();
-        self.set_theme(self.theme_index().map_or(0, |i| (i + 1) % n))
+        self.set_theme(amp_app::skins::next_theme(self.skin_path.as_deref()))
     }
 
     fn set_theme(&mut self, index: usize) -> Result<()> {
@@ -902,11 +909,12 @@ impl App {
         c.windows.equalizer = window(EQ, None);
         c.windows.playlist = window(PL, Some(self.pl.size()));
         c.windows.library = window(LIB, Some(self.lib.size()));
+        c.windows.scale = Some(self.scale);
         c.player.volume = self.controls.volume();
         c.player.balance = self.controls.balance();
         c.player.shuffle = self.main.shuffle();
         c.player.repeat = self.main.repeat();
-        c.player.scale = self.scale_pinned.then_some(self.scale as u8);
+        c.player.scale = self.chosen_scale;
         c.player.skin = self.skin_path.clone();
         c.player.show_remaining = self.main.show_remaining();
         c.player.always_on_top = self.main.always_on_top();
@@ -1158,6 +1166,7 @@ impl App {
                 text,
                 artist,
                 album,
+                folder,
             } => {
                 let Some(lib) = &self.library else {
                     return Ok(());
@@ -1165,6 +1174,7 @@ impl App {
                 let filter = Filter {
                     view: match view {
                         LibView::Audio => View::Audio,
+                        LibView::Folders => View::Folders,
                         LibView::MostPlayed => View::MostPlayed,
                         LibView::RecentlyAdded => View::RecentlyAdded,
                         LibView::RecentlyPlayed => View::RecentlyPlayed,
@@ -1174,25 +1184,42 @@ impl App {
                     artist,
                     album,
                     genre: None,
+                    folder,
                 };
-                let artists = lib
-                    .artist_summary(&filter)?
-                    .into_iter()
-                    .map(|a| ArtistRow {
-                        name: a.name,
-                        albums: a.albums,
-                        tracks: a.tracks,
-                    })
-                    .collect();
-                let albums = lib
-                    .album_summary(&filter)?
-                    .into_iter()
-                    .map(|a| AlbumRow {
-                        name: a.name,
-                        year: a.year,
-                        tracks: a.tracks,
-                    })
-                    .collect();
+                // Only the panes the view shows are filled.
+                if view == LibView::Folders {
+                    let roots = self.config.library.roots(self.dirs.music.as_deref());
+                    let folders = lib
+                        .folder_summary(&filter)?
+                        .into_iter()
+                        .map(|f| FolderRow {
+                            label: amp_app::files::folder_label(&f.path, &roots),
+                            path: f.path,
+                            tracks: f.tracks,
+                        })
+                        .collect();
+                    self.lib.set_folders(folders);
+                } else {
+                    let artists = lib
+                        .artist_summary(&filter)?
+                        .into_iter()
+                        .map(|a| ArtistRow {
+                            name: a.name,
+                            albums: a.albums,
+                            tracks: a.tracks,
+                        })
+                        .collect();
+                    let albums = lib
+                        .album_summary(&filter)?
+                        .into_iter()
+                        .map(|a| AlbumRow {
+                            name: a.name,
+                            year: a.year,
+                            tracks: a.tracks,
+                        })
+                        .collect();
+                    self.lib.set_filters(artists, albums);
+                }
                 let tracks = lib.tracks(&filter, 50_000)?;
                 self.lib_paths = tracks.iter().map(|t| (t.id, t.path.clone())).collect();
                 let rows = tracks
@@ -1210,7 +1237,6 @@ impl App {
                         size: t.size,
                     })
                     .collect();
-                self.lib.set_filters(artists, albums);
                 self.lib.set_tracks(rows);
             }
             LibAction::PlayAll => {
@@ -1601,22 +1627,16 @@ impl App {
 }
 
 /// Loads a skin: a built-in theme name (`dracula`, `nord`, ...), a .wsz file or a skin folder.
-/// Without one, the local base skin when present, else the first built-in theme.
-fn find_skin(arg: Option<PathBuf>) -> Result<Skin> {
-    let path = match arg {
-        Some(p) => p,
-        None => {
-            let p = PathBuf::from("skins/base-2.91.wsz");
-            if !p.is_file() {
-                return Ok(amp_skin::theme::THEMES[0].skin());
-            }
-            p
-        }
-    };
+/// Without one, the local base skin when present, else the first built-in theme. Returns the
+/// skin and what it was loaded from.
+fn find_skin(arg: Option<PathBuf>) -> Result<(Skin, PathBuf)> {
+    let path = arg.unwrap_or_else(|| {
+        amp_app::skins::default_skin(Path::new(amp_app::skins::LOCAL_BASE_SKIN).is_file())
+    });
     if !path.exists()
         && let Some(theme) = path.to_str().and_then(amp_skin::theme::find)
     {
-        return Ok(theme.skin());
+        return Ok((theme.skin(), path));
     }
     let skin = Skin::load(&path).with_context(|| {
         let themes: Vec<&str> = amp_skin::theme::THEMES.iter().map(|t| t.id).collect();
@@ -1629,7 +1649,7 @@ fn find_skin(arg: Option<PathBuf>) -> Result<Skin> {
     for w in skin.warnings() {
         log::warn!("skin: {w}");
     }
-    Ok(skin)
+    Ok((skin, path))
 }
 
 fn main() -> Result<()> {
@@ -1650,10 +1670,11 @@ fn main() -> Result<()> {
     });
     let skin_path = args.skin.clone().or_else(|| config.player.skin.clone());
     let (skin, skin_path) = match find_skin(skin_path.clone()) {
-        Ok(s) => (s, skin_path),
+        Ok((s, p)) => (s, Some(p)),
         Err(e) if args.skin.is_none() && skin_path.is_some() => {
             log::warn!("saved skin unavailable ({e}); trying the default");
-            (find_skin(None)?, None)
+            let (s, p) = find_skin(None)?;
+            (s, Some(p))
         }
         Err(e) => return Err(e),
     };
@@ -1752,10 +1773,11 @@ fn main() -> Result<()> {
         q.set_shuffle(config.player.shuffle);
     });
 
-    let mut platform = X11Platform::connect().context("connecting to the display")?;
+    let mut platform = NativePlatform::connect().context("connecting to the display")?;
     let screens = platform.screens()?;
     // A scale from the command line or a saved toggle wins; otherwise fit the screen.
-    let pinned_scale = args.scale.or(config.player.scale);
+    let saved_scale_choice = config.player.scale;
+    let pinned_scale = args.scale.or(saved_scale_choice);
     let scale = i32::from(
         pinned_scale
             .unwrap_or_else(|| {
@@ -1825,27 +1847,38 @@ fn main() -> Result<()> {
             Rect::new(WIDTH, 0, lib_w, lib_h),
         ),
     ];
-    let mut layout = Layout::new();
-    layout.set_snap_distance(10 * scale);
-    layout.set_min_visible(amp_dock::Size::new(28 * scale, 14 * scale));
+    // Saved positions are desktop coordinates at the saved scale; otherwise the classic
+    // stack. Shaded windows start as their 14 px bar (the library has no shade mode).
+    let starts: Vec<amp_app::layout::PanelStart> = rects
+        .iter()
+        .map(|&(panel, _, _, r)| {
+            let state = saved(panel);
+            let h = if state.is_some_and(|s| s.shaded) && panel != LIB {
+                14
+            } else {
+                r.h
+            };
+            amp_app::layout::PanelStart {
+                id: panel,
+                default: Rect::new(r.x, r.y, r.w, h),
+                saved: state.map(|s| Point::new(s.x, s.y)),
+                visible: state.map_or(panel != LIB, |s| s.visible || panel == MAIN),
+            }
+        })
+        .collect();
+    let layout = amp_app::layout::restore(
+        &starts,
+        config.windows.scale,
+        scale,
+        origin,
+        screens.clone(),
+        MAIN,
+    );
     let mut wins = Vec::new();
-    for (panel, title, kind, r) in rects {
-        // Saved positions are desktop coordinates; otherwise the classic stack.
+    for (panel, title, kind, _) in rects {
         let state = saved(panel);
-        // Shaded windows start as their 14 px bar (the library has no shade mode).
-        let h = if state.is_some_and(|s| s.shaded) && panel != LIB {
-            14
-        } else {
-            r.h
-        };
-        let rect = match state {
-            Some(s) => Rect::new(s.x, s.y, r.w * scale, h * scale),
-            None => Rect::new(
-                origin.x + r.x * scale,
-                origin.y + r.y * scale,
-                r.w * scale,
-                r.h * scale,
-            ),
+        let Some(rect) = layout.rect(panel) else {
+            continue;
         };
         let visible = state.map_or(panel != LIB, |s| s.visible || panel == MAIN);
         // Panels belong to the main window, so the window manager raises them with it.
@@ -1856,7 +1889,6 @@ fn main() -> Result<()> {
             kind,
             owner,
         })?;
-        layout.insert(panel, rect);
         wins.push(Win {
             id,
             panel,
@@ -1866,9 +1898,11 @@ fn main() -> Result<()> {
             hash: None,
         });
     }
-    layout.set_leader(Some(MAIN));
-    layout.set_screens(screens);
     pl.focused = false;
+    #[cfg(windows)]
+    if let Some(hwnd) = wins.first().and_then(|w| platform.hwnd(w.id)) {
+        amp_app::dialog::set_owner(hwnd);
+    }
 
     let shown = |panel: PanelId| wins.iter().any(|w| w.panel == panel && w.visible);
     let mut main = MainWindow::new();
@@ -1934,6 +1968,7 @@ fn main() -> Result<()> {
                 None
             }
         },
+        #[cfg(target_os = "linux")]
         mpris_position: (None, Duration::ZERO, Instant::now()),
         lib_paths: HashMap::new(),
         scan: None,
@@ -1942,7 +1977,7 @@ fn main() -> Result<()> {
         drag: DockDrag::new(),
         tracker: MoveTracker::new(),
         scale,
-        scale_pinned: pinned_scale.is_some(),
+        chosen_scale: saved_scale_choice,
         eq_presets: amp_app::eq_presets::PresetStore::load(&eq::presets_file(&dirs)),
         names: mpsc::channel(),
         prefs: amp_ui::PrefsWindow::new(),

@@ -211,7 +211,7 @@ fn library(cmd: LibraryCmd) -> Result<()> {
             }
         }
         LibraryCmd::Add { folder } => {
-            let folder = std::fs::canonicalize(&folder)
+            let folder = amp_library::canonicalize(&folder)
                 .with_context(|| format!("{} is not an existing folder", folder.display()))?;
             if !folder.is_dir() {
                 bail!("{} is not a folder", folder.display());
@@ -227,7 +227,7 @@ fn library(cmd: LibraryCmd) -> Result<()> {
             }
         }
         LibraryCmd::Remove { folder } => {
-            let canonical = std::fs::canonicalize(&folder).unwrap_or(folder.clone());
+            let canonical = amp_library::canonicalize(&folder).unwrap_or(folder.clone());
             if config.library.remove(&canonical) || config.library.remove(&folder) {
                 config.save(&config_path)?;
                 println!("removed {}", folder.display());

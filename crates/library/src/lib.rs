@@ -120,6 +120,8 @@ pub enum View {
     RecentlyPlayed,
     /// Tracks never played.
     NeverPlayed,
+    /// Every track, in path order, for browsing by folder (untagged files included).
+    Folders,
 }
 
 /// One row of the artist filter: name, number of albums, number of tracks.
@@ -153,6 +155,13 @@ impl Track {
     }
 }
 
+/// One row of the folder filter: a folder that directly holds tracks, and how many.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderSummary {
+    pub path: PathBuf,
+    pub tracks: u64,
+}
+
 /// What a scan did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ScanReport {
@@ -176,6 +185,8 @@ pub struct Filter {
     pub artist: Option<String>,
     pub album: Option<String>,
     pub genre: Option<String>,
+    /// Folder that directly holds the tracks (subfolders are not included).
+    pub folder: Option<PathBuf>,
     /// Text searched in title, artist, album and path.
     pub text: String,
 }
@@ -199,7 +210,7 @@ impl std::fmt::Debug for Library {
     }
 }
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const TRACK_COLUMNS: &str = "id, path, title, artist, album, album_artist, genre, track, disc, \
                              year, duration_ms, codec, sample_rate, channels, bit_rate, size, \
@@ -213,22 +224,32 @@ fn modified_secs(meta: &std::fs::Metadata) -> i64 {
 }
 
 /// The WHERE clause every listing shares: ?1 search pattern, ?2 artist, ?3 album, ?4 genre,
-/// ?5 view.
+/// ?5 view, ?6 folder.
 const FILTER_WHERE: &str = "(title LIKE ?1 ESCAPE '\\' OR artist LIKE ?1 ESCAPE '\\'
         OR album LIKE ?1 ESCAPE '\\' OR album_artist LIKE ?1 ESCAPE '\\'
         OR genre LIKE ?1 ESCAPE '\\' OR path LIKE ?1 ESCAPE '\\')
     AND (?2 IS NULL OR COALESCE(album_artist, artist) = ?2 OR artist = ?2)
     AND (?3 IS NULL OR album = ?3)
     AND (?4 IS NULL OR genre = ?4)
+    AND (?6 IS NULL OR folder = ?6)
     AND CASE ?5 WHEN 1 THEN play_count > 0
                 WHEN 3 THEN last_played IS NOT NULL
                 WHEN 4 THEN play_count = 0
                 ELSE 1 END";
 
 /// Parameters for [`FILTER_WHERE`].
-fn filter_params(f: &Filter) -> (String, Option<String>, Option<String>, Option<String>, i64) {
+type FilterParams = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    i64,
+    Option<String>,
+);
+
+fn filter_params(f: &Filter) -> FilterParams {
     let view = match f.view {
-        View::Audio => 0,
+        View::Audio | View::Folders => 0,
         View::MostPlayed => 1,
         View::RecentlyAdded => 2,
         View::RecentlyPlayed => 3,
@@ -240,7 +261,18 @@ fn filter_params(f: &Filter) -> (String, Option<String>, Option<String>, Option<
         f.album.clone(),
         f.genre.clone(),
         view,
+        f.folder.as_deref().map(folder_key),
     )
+}
+
+/// How a folder is stored and compared: its path as text.
+fn folder_key(folder: &Path) -> String {
+    folder.to_string_lossy().into_owned()
+}
+
+/// The stored folder of a track file: its parent directory.
+fn folder_of(path: &Path) -> Option<String> {
+    path.parent().map(folder_key)
 }
 
 fn now_secs() -> i64 {
@@ -296,11 +328,34 @@ fn like_escape(s: &str) -> String {
         .replace('_', "\\_")
 }
 
+/// `std::fs::canonicalize`, but without the `\\?\` prefix Windows adds to every result when
+/// the path works without it (drive and network paths), so stored and shown paths look
+/// normal. Rust's file APIs add the prefix again by themselves when a path is too long.
+pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    let full = std::fs::canonicalize(path)?;
+    Ok(full
+        .to_str()
+        .and_then(strip_verbatim)
+        .map_or(full.clone(), PathBuf::from))
+}
+
+/// `\\?\C:\x` to `C:\x` and `\\?\UNC\server\share` to `\\server\share`; None for anything
+/// else (other verbatim forms keep their prefix).
+fn strip_verbatim(p: &str) -> Option<String> {
+    let rest = p.strip_prefix(r"\\?\")?;
+    if let Some(unc) = rest.strip_prefix(r"UNC\") {
+        return Some(format!(r"\\{unc}"));
+    }
+    let b = rest.as_bytes();
+    (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\')
+        .then(|| rest.to_owned())
+}
+
 /// Drops roots that are inside other roots, so nested folders are scanned once.
 fn distinct_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
     let norm: Vec<PathBuf> = roots
         .iter()
-        .map(|r| std::fs::canonicalize(r).unwrap_or_else(|_| r.clone()))
+        .map(|r| canonicalize(r).unwrap_or_else(|_| r.clone()))
         .collect();
     let mut out: Vec<PathBuf> = Vec::new();
     for r in &norm {
@@ -367,7 +422,7 @@ impl Library {
                 PRAGMA user_version = 1;",
             )?;
         }
-        if version < SCHEMA_VERSION {
+        if version < 2 {
             // Play statistics. Tracks from before this version count as added when their
             // file was last modified.
             conn.execute_batch(
@@ -377,6 +432,27 @@ impl Library {
                  UPDATE tracks SET added_at = mtime;
                  PRAGMA user_version = 2;",
             )?;
+        }
+        if version < SCHEMA_VERSION {
+            // The folder holding each track, for the folder view.
+            conn.execute_batch(
+                "ALTER TABLE tracks ADD COLUMN folder TEXT;
+                 CREATE INDEX IF NOT EXISTS tracks_folder ON tracks(folder);",
+            )?;
+            let rows: Vec<(i64, String)> = {
+                let mut stmt = conn.prepare("SELECT id, path FROM tracks")?;
+                let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            let tx = conn.unchecked_transaction()?;
+            for (id, path) in rows {
+                tx.execute(
+                    "UPDATE tracks SET folder = ?2 WHERE id = ?1",
+                    params![id, folder_of(Path::new(&path))],
+                )?;
+            }
+            tx.execute_batch("PRAGMA user_version = 3;")?;
+            tx.commit()?;
         }
         Ok(Self { conn })
     }
@@ -452,13 +528,13 @@ impl Library {
                 tx.execute(
                     "INSERT INTO tracks (path, size, mtime, title, artist, album, album_artist,
                         genre, track, disc, year, duration_ms, codec, sample_rate, channels,
-                        bit_rate, added_at)
+                        bit_rate, added_at, folder)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                        ?17)
+                        ?17, ?18)
                      ON CONFLICT(path) DO UPDATE SET size = ?2, mtime = ?3, title = ?4,
                         artist = ?5, album = ?6, album_artist = ?7, genre = ?8, track = ?9,
                         disc = ?10, year = ?11, duration_ms = ?12, codec = ?13,
-                        sample_rate = ?14, channels = ?15, bit_rate = ?16",
+                        sample_rate = ?14, channels = ?15, bit_rate = ?16, folder = ?18",
                     params![
                         key,
                         size,
@@ -477,6 +553,7 @@ impl Library {
                         tags.channels,
                         tags.bit_rate.map(|b| b as i64),
                         now_secs(),
+                        folder_of(path),
                     ],
                 )?;
                 if known.is_some() {
@@ -540,13 +617,17 @@ impl Library {
                 "added_at DESC, COALESCE(album_artist, artist), album, disc, track, path"
             }
             View::RecentlyPlayed => "last_played DESC, path",
+            View::Folders => "folder COLLATE NOCASE, path COLLATE NOCASE",
         };
         let sql = format!(
-            "SELECT {TRACK_COLUMNS} FROM tracks WHERE {FILTER_WHERE} ORDER BY {order} LIMIT ?6"
+            "SELECT {TRACK_COLUMNS} FROM tracks WHERE {FILTER_WHERE} ORDER BY {order} LIMIT ?7"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let p = filter_params(filter);
-        let rows = stmt.query_map(params![p.0, p.1, p.2, p.3, p.4, limit as i64], row_to_track)?;
+        let rows = stmt.query_map(
+            params![p.0, p.1, p.2, p.3, p.4, p.5, limit as i64],
+            row_to_track,
+        )?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -565,7 +646,7 @@ impl Library {
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let p = filter_params(&f);
-        let rows = stmt.query_map(params![p.0, p.1, p.2, p.3, p.4], |r| {
+        let rows = stmt.query_map(params![p.0, p.1, p.2, p.3, p.4, p.5], |r| {
             Ok(ArtistSummary {
                 name: r.get(0)?,
                 albums: r.get::<_, i64>(1)? as u64,
@@ -589,13 +670,35 @@ impl Library {
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let p = filter_params(&f);
-        let rows = stmt.query_map(params![p.0, p.1, p.2, p.3, p.4], |r| {
+        let rows = stmt.query_map(params![p.0, p.1, p.2, p.3, p.4, p.5], |r| {
             Ok(AlbumSummary {
                 name: r.get(0)?,
                 year: r
                     .get::<_, Option<i64>>(1)?
                     .and_then(|y| u32::try_from(y).ok()),
                 tracks: r.get::<_, i64>(2)? as u64,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Folders that directly hold tracks the filter's view, text, artist and album select
+    /// (its folder is ignored), with track counts, by path.
+    pub fn folder_summary(&self, filter: &Filter) -> Result<Vec<FolderSummary>> {
+        let f = Filter {
+            folder: None,
+            ..filter.clone()
+        };
+        let sql = format!(
+            "SELECT folder AS v, COUNT(*) FROM tracks WHERE {FILTER_WHERE} AND v IS NOT NULL
+             GROUP BY v ORDER BY v COLLATE NOCASE"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let p = filter_params(&f);
+        let rows = stmt.query_map(params![p.0, p.1, p.2, p.3, p.4, p.5], |r| {
+            Ok(FolderSummary {
+                path: PathBuf::from(r.get::<_, String>(0)?),
+                tracks: r.get::<_, i64>(1)? as u64,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -672,6 +775,22 @@ impl Library {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn verbatim_prefix_is_dropped_where_it_is_not_needed() {
+        // Regression: the Windows build showed library folders as \\?\C:\...
+        assert_eq!(
+            strip_verbatim(r"\\?\C:\Users\u\Music").as_deref(),
+            Some(r"C:\Users\u\Music")
+        );
+        assert_eq!(
+            strip_verbatim(r"\\?\UNC\nas\music\a").as_deref(),
+            Some(r"\\nas\music\a")
+        );
+        assert_eq!(strip_verbatim(r"\\?\Volume{1234}\x"), None);
+        assert_eq!(strip_verbatim(r"C:\already\plain"), None);
+        assert_eq!(strip_verbatim("/home/u/Music"), None);
+    }
 
     /// Tags derived from the file name; counts reads; fails for names containing "bad".
     struct FakeTags {
@@ -973,6 +1092,73 @@ mod tests {
         assert_eq!(t.plays.added_at, Some(1234), "added when last modified");
         assert_eq!(t.plays.play_count, 0);
         assert!(lib.record_play(Path::new("/m/a.flac"), 99).unwrap());
+        assert_eq!(
+            lib.folder_summary(&Filter::default()).unwrap(),
+            vec![FolderSummary {
+                path: PathBuf::from("/m"),
+                tracks: 1
+            }],
+            "folders filled in for old rows"
+        );
+        drop(lib);
+        // Reopening an upgraded database does not migrate again.
+        Library::open(&db).unwrap();
+    }
+
+    #[test]
+    fn folder_view_lists_folders_and_their_own_tracks() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        write(d, "b/02 two.flac", b"1");
+        write(d, "b/01 one.flac", b"2");
+        write(d, "b/deeper/01 bad.mp3", b"3");
+        write(d, "A/01 x.flac", b"4");
+        let mut lib = Library::open_in_memory().unwrap();
+        scan(&mut lib, &[d.to_path_buf()], &FakeTags::new());
+        let view = Filter {
+            view: View::Folders,
+            ..Filter::default()
+        };
+        let canon = canonicalize(d).unwrap();
+        assert_eq!(
+            lib.folder_summary(&view).unwrap(),
+            vec![
+                FolderSummary {
+                    path: canon.join("A"),
+                    tracks: 1
+                },
+                FolderSummary {
+                    path: canon.join("b"),
+                    tracks: 2
+                },
+                FolderSummary {
+                    path: canon.join("b/deeper"),
+                    tracks: 1
+                },
+            ]
+        );
+        let in_b = Filter {
+            folder: Some(canon.join("b")),
+            ..view.clone()
+        };
+        assert_eq!(
+            titles(lib.tracks(&in_b, 10).unwrap()),
+            ["01 one", "02 two"],
+            "file order, subfolders left out"
+        );
+        // Untagged files are listed under their folder too.
+        let deeper = Filter {
+            folder: Some(canon.join("b/deeper")),
+            ..view.clone()
+        };
+        let t = lib.tracks(&deeper, 10).unwrap();
+        assert_eq!(t[0].display_title(), "01 bad");
+        // Search narrows the folder list.
+        let found = Filter {
+            text: "two".into(),
+            ..view
+        };
+        assert_eq!(lib.folder_summary(&found).unwrap().len(), 1);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Drag, snap and dock demo on the X11 backend.
+//! Drag, snap and dock demo on the native window backend.
 //!
 //! `openamp-dock-demo [--skin SKIN.wsz] [--scale 1|2|3]`
 //!
@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use amp_dock::{Layout, PanelId, Rect};
-use amp_platform::x11::X11Platform;
+use amp_platform::NativePlatform;
 use amp_platform::{
     Event, MouseButton, Platform, Point, Size, WindowId, WindowKind, WindowSpec, keys,
 };
@@ -102,7 +102,7 @@ fn main() -> Result<()> {
         None => None,
     };
 
-    let mut platform = X11Platform::connect().context("connecting to X11")?;
+    let mut platform = NativePlatform::connect().context("connecting to the display")?;
     let screens = platform.screens()?;
     let origin = screens
         .first()

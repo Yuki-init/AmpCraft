@@ -1,0 +1,11 @@
+[env]
+# Windows cross builds: the MinGW headers pull in clang's AMX intrinsics through immintrin.h,
+# and bindgen cannot lay out their packed and aligned tile struct, so ffmpeg-sys-next's
+# bindings fail to compile. Pre-defining the include guards skips those two headers; no
+# FFmpeg API uses them. The variable is read only for this target.
+BINDGEN_EXTRA_CLANG_ARGS_x86_64_pc_windows_gnu = "-D__AMXINTRIN_H -D__AMX_COMPLEXINTRIN_H"
+
+# Windows test and run binaries go through Wine (in the dev image); scripts/test-windows.sh
+# sets up the prefix and a virtual display.
+[target.x86_64-pc-windows-gnu]
+runner = "wine"

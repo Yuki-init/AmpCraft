@@ -13,7 +13,8 @@ use swash::zeno::Format;
 use swash::{CacheKey, FontRef};
 
 /// Families tried in order; the database's generic sans-serif comes last. Latin first:
-/// DejaVu and Noto Sans hint well at small sizes, and CJK fonts fill in what they lack.
+/// DejaVu and Noto Sans hint well at small sizes, and CJK fonts fill in what they lack: the
+/// common Linux ones, then the ones every Windows install has (Japanese, Korean, Chinese).
 const PREFERRED: &[&str] = &[
     "DejaVu Sans",
     "Noto Sans",
@@ -27,6 +28,16 @@ const PREFERRED: &[&str] = &[
     "VL Gothic",
     "TakaoGothic",
     "Droid Sans Fallback",
+    "Yu Gothic UI",
+    "Yu Gothic",
+    "Meiryo UI",
+    "Meiryo",
+    "MS Gothic",
+    "Malgun Gothic",
+    "Microsoft YaHei UI",
+    "Microsoft YaHei",
+    "Microsoft JhengHei UI",
+    "Microsoft JhengHei",
 ];
 
 /// Exponent applied to coverage; below 1 darkens partial pixels for crisper small text.
@@ -219,5 +230,22 @@ mod tests {
             context: ScaleContext::new(),
         };
         assert!(f.render("abc", 11).is_none());
+    }
+}
+
+#[cfg(test)]
+mod preferred_tests {
+    use super::PREFERRED;
+
+    #[test]
+    fn windows_cjk_fonts_are_in_the_fallback_list() {
+        // Regression: on Windows only Arial matched, so Japanese titles showed as boxes.
+        for family in ["Yu Gothic UI", "Meiryo", "Malgun Gothic", "Microsoft YaHei"] {
+            assert!(PREFERRED.contains(&family), "{family}");
+        }
+        // Latin fonts stay ahead of every CJK font.
+        let arial = PREFERRED.iter().position(|f| *f == "Arial");
+        let first_cjk = PREFERRED.iter().position(|f| f.contains("CJK"));
+        assert!(arial < first_cjk);
     }
 }

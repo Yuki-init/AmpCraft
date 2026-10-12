@@ -34,7 +34,7 @@ impl App {
         };
         PrefsState {
             always_on_top: self.main.always_on_top(),
-            scale: self.scale_pinned.then_some(self.scale as u8),
+            scale: self.chosen_scale,
             show_remaining: self.main.show_remaining(),
             repeat: self.main.repeat(),
             shuffle: self.main.shuffle(),
@@ -224,14 +224,15 @@ impl App {
         match action {
             PrefsAction::SetAlwaysOnTop(on) => self.set_always_on_top(on)?,
             PrefsAction::SetScale(Some(n)) => {
-                self.scale_pinned = true;
-                let n = i32::from(n.clamp(1, 3));
+                let n = n.clamp(1, 3);
+                self.chosen_scale = Some(n);
+                let n = i32::from(n);
                 if n != self.scale {
                     self.set_scale(n)?;
                 }
             }
             PrefsAction::SetScale(None) => {
-                self.scale_pinned = false;
+                self.chosen_scale = None;
                 let screens = self.platform.screens()?;
                 let height = screens.first().map_or(0, |s| s.h);
                 let auto = i32::from(amp_platform::auto_scale(height, self.platform.dpi()));

@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xvfb xauth openbox xdotool x11-utils imagemagick \
         libsqlite3-dev \
         fontconfig fonts-dejavu-core fonts-noto-cjk dbus-daemon \
+        gcc-mingw-w64-x86-64 unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Route the ALSA default device to the null plugin so audio tests never touch hardware.
@@ -32,5 +33,9 @@ RUN test -n "$RUST_VERSION" \
     && cargo install --locked cargo-nextest cargo-deny \
     && rm -rf /usr/local/cargo/registry /usr/local/cargo/git \
     && chmod -R a+rwX /usr/local/rustup /usr/local/cargo
+
+# Wine (64-bit only) runs the cross-built Windows exes for smoke tests (scripts/wine-smoke.sh).
+RUN apt-get update && apt-get install -y --no-install-recommends wine wine64 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work

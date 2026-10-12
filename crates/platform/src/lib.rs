@@ -1,17 +1,29 @@
-//! Platform traits and the X11 backend.
+//! Platform traits and the window backends: X11 everywhere except Windows, Win32 on Windows.
 //!
-//! The rest of the app talks to windows only through [`Platform`]. Windows are borderless:
-//! the skin draws the title bar, and dragging is done by the app (see `amp-dock`), not by the
-//! window manager. Pixels are `0xAARRGGBB` rows, the same layout as `amp_skin::Bitmap`.
+//! The rest of the app talks to windows only through [`Platform`], and gets the backend for
+//! the OS it was built for as [`NativePlatform`]. Windows are borderless: the skin draws the
+//! title bar, and dragging is done by the app (see `amp-dock`), not by the window manager.
+//! Pixels are `0xAARRGGBB` rows, the same layout as `amp_skin::Bitmap`.
 
 use std::time::Duration;
 
 pub use amp_dock::{Point, Rect, Size};
 
 pub mod dirs;
+#[cfg(windows)]
+pub mod win32;
+pub mod win32_keys;
+#[cfg(not(windows))]
 pub mod x11;
 
 pub use dirs::AppDirs;
+
+/// The window backend for the OS this was built for. Each has a `connect()` constructor.
+#[cfg(not(windows))]
+pub type NativePlatform = x11::X11Platform;
+/// The window backend for the OS this was built for. Each has a `connect()` constructor.
+#[cfg(windows)]
+pub type NativePlatform = win32::Win32Platform;
 
 /// Identifies a window created by a [`Platform`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

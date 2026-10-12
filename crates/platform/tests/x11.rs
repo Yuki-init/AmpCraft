@@ -1,6 +1,8 @@
 //! Real X11 tests. They run under Xvfb (scripts/test.sh) and skip when `$DISPLAY` is unset.
 //! Input is injected with the XTEST extension from a second connection, like a real user.
 
+// There is no X11 backend on Windows.
+#![cfg(not(windows))]
 // Integration tests are test code; panicking on setup failure is the point.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
