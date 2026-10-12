@@ -119,6 +119,13 @@ fn wheel_notches(acc: &mut i32, delta: i32) -> i32 {
     notches
 }
 
+/// Whether a mouse move to `root` over `hwnd` is real motion. Windows also sends
+/// `WM_MOUSEMOVE` when the window under a still pointer changes (one was shown or hidden);
+/// X11 reports motion only when the pointer moves, and the app relies on that.
+fn is_new_motion(last: Option<(HWND, Point)>, hwnd: HWND, root: Point) -> bool {
+    last != Some((hwnd, root))
+}
+
 /// Mouse buttons held, from the `MK_*` flags in a mouse message's `wParam`.
 fn buttons_held(wp: WPARAM) -> bool {
     wp & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2) != 0
@@ -192,6 +199,8 @@ struct Shared {
     /// The window holding an explicit input grab.
     grab: Option<HWND>,
     wheel: i32,
+    /// The last motion reported, to drop moves that did not move.
+    last_motion: Option<(HWND, Point)>,
     cursors: [HCURSOR; 4],
 }
 
@@ -292,11 +301,20 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
     match msg {
         WM_MOUSEMOVE => {
             let local = lparam_point(lp);
-            push(Event::Motion {
-                window,
-                local,
-                root: to_screen(hwnd, local),
-            });
+            let root = to_screen(hwnd, local);
+            let new = with(|s| {
+                let new = is_new_motion(s.last_motion, hwnd, root);
+                s.last_motion = Some((hwnd, root));
+                new
+            })
+            .unwrap_or(true);
+            if new {
+                push(Event::Motion {
+                    window,
+                    local,
+                    root,
+                });
+            }
             0
         }
         WM_MOUSEWHEEL => {
@@ -516,6 +534,7 @@ impl Win32Platform {
                 events: VecDeque::new(),
                 grab: None,
                 wheel: 0,
+                last_motion: None,
                 cursors,
             });
         });
@@ -977,6 +996,20 @@ mod tests {
     fn dib_header_is_top_down_32_bit() {
         let h = dib_header(275, 116).bmiHeader;
         assert_eq!((h.biWidth, h.biHeight, h.biBitCount), (275, -116, 32));
+    }
+
+    #[test]
+    fn motion_without_movement_is_dropped() {
+        // Regression: hiding a submenu made Windows send a WM_MOUSEMOVE at the same spot,
+        // which reopened the submenu that Escape had just closed.
+        let a = 1usize as HWND;
+        let b = 2usize as HWND;
+        let p = Point::new(10, 20);
+        assert!(is_new_motion(None, a, p));
+        assert!(!is_new_motion(Some((a, p)), a, p));
+        assert!(is_new_motion(Some((a, p)), a, Point::new(11, 20)));
+        // Entering another window at the same desktop point is news for that window.
+        assert!(is_new_motion(Some((a, p)), b, p));
     }
 
     #[test]
