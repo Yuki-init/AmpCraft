@@ -48,7 +48,8 @@ openamp-<version>-windows-x64\
 3. Look at every screenshot in `report\` (the `*-player.png` crops are the useful ones).
    What correct looks like:
    - Three windows stacked and touching, top to bottom: the main window (275x116 at 1x,
-     550x232 at 2x, 825x348 at 3x), the equalizer (same width, 116 high at 1x) and the
+     550x232 at 2x, 825x348 at 3x; the player picks 2x by itself on screens about 1300 px
+     tall or more), the equalizer (same width, 116 high at 1x) and the
      playlist (same width, at least 116 high at 1x). No window frames, title bars or
      shadows from Windows; the skin draws its own title bars.
    - The default skin is a generated dark theme (Dracula colors): purple, pink and grey
@@ -78,8 +79,17 @@ openamp-<version>-windows-x64\
    (double-click a title bar), Alt+S (next theme), Alt+L (media library), Ctrl+P
    (preferences), minimizing from the main window and restoring from the taskbar, and,
    if the machine has several monitors or a display scale above 100%, how the windows
-   look and move there. Known gaps: file dialogs and message boxes (Eject, ADD, file info)
-   use Linux helpers and do nothing on Windows yet; media keys are not wired on Windows.
+   look and move there.
+
+   New in this build, please check by hand: the Windows file dialogs and message boxes.
+   Eject (open files, several at once), playlist ADD, Preferences (Ctrl+P) "load skin file"
+   with a .wsz (the owner can supply one; if none, export one first with
+   `openamp-cli.exe skin export nord report\sandbox\nord.wsz`), the media library's Add
+   folder, EQ PRESETS load/save to file and "save preset" (a small name prompt), and File
+   info (I button, or right-click menu) as a message box. Cancel each once too. Also check
+   that after a run at one scale, starting with `--scale 1` and `--scale 3` keeps the three
+   windows docked (fixed since the last report), and that the first Alt+S changes the theme.
+   Known gap: media keys are not wired on Windows.
 
 5. Write `report\REPORT.md`:
    - Environment: Windows version, display scale(s), monitors, sound device (from

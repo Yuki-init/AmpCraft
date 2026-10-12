@@ -103,6 +103,8 @@ function Invoke-Cli([string[]]$CliArgs, [int]$TimeoutSec = 60) {
     $quoted = $CliArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
     $p = Start-Process -FilePath $Cli -ArgumentList $quoted -NoNewWindow -PassThru `
         -RedirectStandardOutput $out -RedirectStandardError $err
+    # Windows PowerShell 5.1 only keeps ExitCode if the handle was read while it ran.
+    $null = $p.Handle
     if (-not $p.WaitForExit($TimeoutSec * 1000)) {
         $p.Kill()
         $code = 'timeout'
@@ -139,6 +141,7 @@ function Start-Player([string[]]$PlayerArgs = @()) {
     $startArgs = @{ FilePath = $Player; PassThru = $true; RedirectStandardError = $log }
     if ($quoted) { $startArgs.ArgumentList = $quoted }
     $script:PlayerProc = Start-Process @startArgs
+    $null = $script:PlayerProc.Handle
     # Wait for the main, equalizer and playlist windows.
     $deadline = (Get-Date).AddSeconds(15)
     while ((Get-Date) -lt $deadline -and -not $script:PlayerProc.HasExited) {
@@ -232,7 +235,12 @@ function Send-Keys([byte[]]$Keys) {
     }
 }
 
-if ($LoadOnly) { return }
+if ($LoadOnly) {
+    # Interactive use: do not turn every line a program writes to stderr into an error.
+    $ErrorActionPreference = 'Continue'
+    Set-SandboxEnv
+    return
+}
 
 # ---------------------------------------------------------------------------------------
 Remove-Item -Recurse -Force $Report -ErrorAction SilentlyContinue
@@ -318,7 +326,9 @@ if ($wins.Count -ge 3) {
     $after | Select-Object title, x, y, w, h | Format-Table | Out-String | Set-Content (Join-Path $Report 'windows-02-dragged.txt')
 
     # Right-click opens the main menu (a fourth, topmost window); Escape closes it.
-    $main = Get-PlayerWindows | Sort-Object { $_.y } | Select-Object -First 1
+    # Assign before piping: the function returns its list as one object.
+    $all = Get-PlayerWindows
+    $main = $all | Sort-Object { $_.y } | Select-Object -First 1
     Invoke-Click ($main.x + 100) ($main.y + 40) -Right
     Start-Sleep -Milliseconds 500
     $n = (Get-PlayerWindows).Count
