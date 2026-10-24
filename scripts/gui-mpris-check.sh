@@ -4,20 +4,20 @@
 # Run inside the container: scripts/dev.sh dbus-run-session -- scripts/gui-mpris-check.sh
 set -u
 SKIN=${SKIN:-skins/base-2.91.wsz}
-cargo build -q --bin openamp || exit 1
+cargo build -q --bin ampcraft || exit 1
 G=.cache/gui-mpris
 rm -rf "$G" && mkdir -p "$G/music"
-export OPENAMP_CONFIG_DIR="$PWD/$G/config" OPENAMP_DATA_DIR="$PWD/$G/data"
+export AMPCRAFT_CONFIG_DIR="$PWD/$G/config" AMPCRAFT_DATA_DIR="$PWD/$G/data"
 ffmpeg -v error -y -f lavfi -i "sine=f=440:d=60" -ac 2 -metadata artist=Ma15 -metadata title="ハレ晴レユカイ" -c:a flac "$G/music/1.flac"
 ffmpeg -v error -y -f lavfi -i "sine=f=550:d=60" -ac 2 -metadata artist=KEIKO -metadata title="God Knows" -c:a flac "$G/music/2.flac"
 Xvfb :86 -screen 0 1024x768x24 -nolisten tcp >/dev/null 2>&1 &
 XPID=$!
 export DISPLAY=:86
 sleep 1
-target/debug/openamp --audio null --skin "$SKIN" "$G/music/1.flac" "$G/music/2.flac" >.cache/mpris.log 2>&1 &
+target/debug/ampcraft --audio null --skin "$SKIN" "$G/music/1.flac" "$G/music/2.flac" >.cache/mpris.log 2>&1 &
 APID=$!
 sleep 2
-DEST=org.mpris.MediaPlayer2.openamp
+DEST=org.mpris.MediaPlayer2.ampcraft
 call() { dbus-send --session --print-reply --dest=$DEST /org/mpris/MediaPlayer2 "$@"; }
 prop() { call org.freedesktop.DBus.Properties.Get string:org.mpris.MediaPlayer2.Player string:"$1"; }
 FAIL=0

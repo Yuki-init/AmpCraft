@@ -4,10 +4,10 @@
 # closes, and checks the saved config. Screenshots go to .cache/prefs-*.png.
 # Run inside the container: scripts/dev.sh scripts/gui-prefs-check.sh
 set -u
-cargo build -q --bin openamp || exit 1
+cargo build -q --bin ampcraft || exit 1
 G=.cache/gui-prefs
 rm -rf "$G" && mkdir -p "$G/config" "$G/one" "$G/two"
-export OPENAMP_CONFIG_DIR="$PWD/$G/config" OPENAMP_DATA_DIR="$PWD/$G/data" OPENAMP_LOG=info
+export AMPCRAFT_CONFIG_DIR="$PWD/$G/config" AMPCRAFT_DATA_DIR="$PWD/$G/data" AMPCRAFT_LOG=info
 cat >"$G/config/config.toml" <<TOML
 [player]
 scale = 1
@@ -25,7 +25,7 @@ sleep 1
 FAIL=0
 check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; FAIL=1; fi; }
 geo() { xwininfo -name "$1" | awk '/Absolute upper-left X/{x=$4} /Absolute upper-left Y/{y=$4} /Width/{w=$2} /Height/{h=$2} END{print x, y, w, h}'; }
-target/debug/openamp --audio null --skin dracula >"$G/log" 2>&1 &
+target/debug/ampcraft --audio null --skin dracula >"$G/log" 2>&1 &
 APID=$!
 sleep 2
 xdotool mousemove $((100 + 13)) $((100 + 28)) click 1; sleep 0.8    # O
@@ -36,9 +36,9 @@ check "preferences open (${PW}x$PH)" '[ "$PW" = 400 ] && [ "$PH" = 290 ]'
 at() { xdotool mousemove $((PX + $1)) $((PY + $2)) click 1; sleep 0.4; }
 import -window root -crop 410x300+$((PX - 5))+$((PY - 5)) +repage .cache/prefs-1-general.png
 at 131 45                       # Keep the player above other windows
-check "always on top" 'xprop -name OpenAMP _NET_WM_STATE | grep -q ABOVE'
+check "always on top" 'xprop -name AmpCraft _NET_WM_STATE | grep -q ABOVE'
 at 131 105                      # Double (2x): rows Auto 77, 1x 91, 2x 105
-read -r _ _ MW MH <<<"$(geo OpenAMP)"
+read -r _ _ MW MH <<<"$(geo AmpCraft)"
 check "double size from the preferences (${MW}x$MH)" '[ "$MW" = 550 ]'
 read -r PX PY PW PH <<<"$(geo Preferences)"
 check "preferences follow the scale (${PW}x$PH)" '[ "$PW" = 800 ]'
@@ -49,7 +49,9 @@ at 131 59                       # Shuffle (Repeat 45, Shuffle 59)
 at 131 105                      # Oscilloscope (Spectrum 91, Oscilloscope 105)
 import -window root -crop 410x300+$((PX - 5))+$((PY - 5)) +repage .cache/prefs-2-playback.png
 at 30 58                        # Skins page
-at 131 59                       # Nord (Dracula 45, Nord 59)
+at 131 45                       # System colors (System 45, Dracula 59, Nord 73)
+check "system theme chosen" 'grep -q "theme: System" "$G/log"'
+at 131 73                       # Nord
 check "theme switched" 'grep -q "theme: Nord" "$G/log"'
 at 30 72                        # Media Library page
 import -window root -crop 410x300+$((PX - 5))+$((PY - 5)) +repage .cache/prefs-3-library.png

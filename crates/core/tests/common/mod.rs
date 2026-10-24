@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use amp_core::wav::{WavFormat, write_wav};
-use amp_core::{Decoder, PcmSource, PlaybackState, Player};
+use ampcraft_core::wav::{WavFormat, write_wav};
+use ampcraft_core::{Decoder, PcmSource, PlaybackState, Player};
 
 /// Stereo test signal: different frequencies per channel so swaps and drops are visible.
 pub fn stereo_tone(rate: u32, frames: usize, start_frame: usize) -> Vec<f32> {

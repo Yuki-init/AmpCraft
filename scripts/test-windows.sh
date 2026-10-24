@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Runs tests built for Windows (x86_64-pc-windows-gnu) under Wine with a virtual display, in
 # the dev container. Offline. The Wine prefix is kept in .cache/wine-prefix.
-# Usage: scripts/test-windows.sh [-p CRATE]... [-- TEST ARGS]   (default: amp-platform)
+# Usage: scripts/test-windows.sh [-p CRATE]... [-- TEST ARGS]   (default: ampcraft-platform)
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 cd "$REPO_ROOT"
 
 args=("$@")
 if [[ ${#args[@]} -eq 0 ]]; then
-    args=(-p amp-platform)
+    args=(-p ampcraft-platform)
 fi
 env_args=()
 if [[ -f .cache/ffmpeg-win64/include/libavcodec/avcodec.h ]]; then

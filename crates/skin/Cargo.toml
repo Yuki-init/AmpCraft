@@ -1,5 +1,5 @@
 [package]
-name = "amp-skin"
+name = "ampcraft-skin"
 description = "Classic skin loader: .wsz archives, sprite maps, bitmap font, region masks."
 version.workspace = true
 edition.workspace = true

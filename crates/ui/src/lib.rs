@@ -32,7 +32,7 @@ pub use vis::{VisMode, Visualizer};
 /// Generated skins for tests: every pixel encodes its sheet and coordinates.
 #[cfg(test)]
 pub(crate) mod test_skin {
-    use amp_skin::{Bitmap, Sheet, Skin, rgb};
+    use ampcraft_skin::{Bitmap, Sheet, Skin, rgb};
 
     fn size(sheet: Sheet) -> (u32, u32) {
         match sheet {

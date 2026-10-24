@@ -1,6 +1,6 @@
-# OpenAMP Windows test run
+# AmpCraft Windows test run
 
-You are on the owner's Windows machine, testing an early Windows build of OpenAMP, a
+You are on the owner's Windows machine, testing an early Windows build of AmpCraft, a
 reimplementation of a classic 2.x-era skinnable music player. The build was cross-compiled
 on Linux and has only been tested under Wine, so this is the first run on real Windows. Your
 job: run the checks, look at the screenshots, investigate anything odd, and write a report
@@ -9,8 +9,8 @@ the developers can act on.
 ## Layout
 
 ```
-openamp-<version>-<release>-windows-x64\
-  openamp.exe, openamp-cli.exe     the player and its headless CLI
+ampcraft-<version>-<release>-windows-x64\
+  ampcraft.exe                     the player
   av*.dll, swresample-*.dll        FFmpeg (LGPL), loaded from this folder
   test-kit\                        you are here
     run-report.ps1                 automated checks and screenshots
@@ -20,7 +20,7 @@ openamp-<version>-<release>-windows-x64\
 ## Rules
 
 - Write only inside `test-kit\report\`. The script points the player's settings, data and
-  cache at `report\sandbox` with `OPENAMP_*_DIR` variables; keep that for anything you run
+  cache at `report\sandbox` with `AMPCRAFT_*_DIR` variables; keep that for anything you run
   by hand too (`. .\run-report.ps1 -LoadOnly` sets them for you via `Start-Player`).
 - Do not install anything, change system settings, or touch the owner's music or files.
 - Keep sound quiet and short: the one audible check is a 3 second tone at volume 20. Use
@@ -38,10 +38,10 @@ openamp-<version>-<release>-windows-x64\
    ```
 
    If Windows blocked the files (they came from the internet), run
-   `Get-ChildItem -Recurse .. | Unblock-File` first. If SmartScreen stops `openamp.exe`
+   `Get-ChildItem -Recurse .. | Unblock-File` first. If SmartScreen stops `ampcraft.exe`
    (it is not signed), tell the owner; do not try to get around it yourself.
 
-2. Read `report\results.json`, `report\system.txt`, `report\cli.txt`, the
+2. Read `report\results.json`, `report\system.txt`, the
    `report\windows-*.txt` window lists and the `report\player-*.log` files (the player's
    own log at info level).
 
@@ -112,7 +112,7 @@ openamp-<version>-<release>-windows-x64\
 6. Zip the report folder for the owner, then tell them where it is:
 
    ```
-   Compress-Archive -Force -Path .\report\* -DestinationPath .\openamp-windows-report.zip
+   Compress-Archive -Force -Path .\report\* -DestinationPath .\ampcraft-windows-report.zip
    ```
 
    The `sandbox` folder inside may be left out if it is large; it holds only generated

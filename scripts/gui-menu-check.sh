@@ -5,10 +5,10 @@
 # Exit quits with the choices saved. Screenshots go to .cache/menu-*.png.
 # Run inside the container: scripts/dev.sh scripts/gui-menu-check.sh
 set -u
-cargo build -q --bin openamp || exit 1
+cargo build -q --bin ampcraft || exit 1
 G=.cache/gui-menu
 rm -rf "$G" && mkdir -p "$G"
-export OPENAMP_CONFIG_DIR="$PWD/$G/config" OPENAMP_DATA_DIR="$PWD/$G/data" OPENAMP_LOG=info
+export AMPCRAFT_CONFIG_DIR="$PWD/$G/config" AMPCRAFT_DATA_DIR="$PWD/$G/data" AMPCRAFT_LOG=info
 ffmpeg -v error -y -f lavfi -i "sine=f=440:d=60" -ac 2 -metadata title="Tone" -c:a flac "$G/1.flac"
 Xvfb :88 -screen 0 1024x768x24 -nolisten tcp >/dev/null 2>&1 &
 XPID=$!
@@ -25,8 +25,8 @@ menu_geo() {
         xwininfo -id "$id" | awk '/Absolute upper-left X/{x=$4} /Absolute upper-left Y/{y=$4} /Width/{w=$2} /Height/{h=$2} END{print x, y, w, h}'
     done | sort -n | sed -n "${1}p"
 }
-height() { xwininfo -name OpenAMP | awk '/Height/{print $2}'; }
-target/debug/openamp --audio null --skin dracula --scale 1 "$G/1.flac" >"$G/log" 2>&1 &
+height() { xwininfo -name AmpCraft | awk '/Height/{print $2}'; }
+target/debug/ampcraft --audio null --skin dracula --scale 1 "$G/1.flac" >"$G/log" 2>&1 &
 APID=$!
 sleep 2
 
@@ -39,7 +39,7 @@ check "Escape closes them" '[ "$(prefs)" = 0 ]'
 
 # A button: always on top.
 xdotool mousemove $((100 + 13)) $((100 + 36)) click 1; sleep 0.5
-check "A sets always on top" 'xprop -name OpenAMP _NET_WM_STATE | grep -q ABOVE'
+check "A sets always on top" 'xprop -name AmpCraft _NET_WM_STATE | grep -q ABOVE'
 check "on the panels too" 'xprop -name Equalizer _NET_WM_STATE | grep -q ABOVE'
 
 # Right-click: main menu; hover Skins, choose the second theme in the submenu.

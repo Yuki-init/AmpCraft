@@ -1,14 +1,14 @@
 //! Renders a static main window from a skin to a PNG, for checking sprite maps by eye.
 //!
-//! `cargo run -p amp-skin --example preview -- SKIN.wsz OUT.png [SCALE]`
+//! `cargo run -p ampcraft-skin --example preview -- SKIN.wsz OUT.png [SCALE]`
 //!
 //! Element positions are the classic main-window layout (cross-checked against Webamp's
 //! main-window.css, MIT). They will move to the `ui` crate with the real main window.
 
 use std::path::PathBuf;
 
-use amp_skin::sprites::{self, main, numbers};
-use amp_skin::{Bitmap, Skin};
+use ampcraft_skin::sprites::{self, main, numbers};
+use ampcraft_skin::{Bitmap, Skin};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             d(&mut win, numbers::digit(sheet, digit), x, 26);
         }
     }
-    skin.draw_text(&mut win, "1. OPENAMP PREVIEW - SKIN TEST (4:56)", 111, 27);
+    skin.draw_text(&mut win, "1. AMPCRAFT PREVIEW - SKIN TEST (4:56)", 111, 27);
     skin.draw_text(&mut win, "320", 111, 43);
     skin.draw_text(&mut win, "44", 156, 43);
     d(&mut win, main::MONO, 212, 41);

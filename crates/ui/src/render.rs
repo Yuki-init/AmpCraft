@@ -2,7 +2,7 @@
 
 use std::hash::{Hash, Hasher};
 
-use amp_skin::Bitmap;
+use ampcraft_skin::Bitmap;
 
 /// Hash of everything that affects a window's pixels, so unchanged windows can skip
 /// rendering.

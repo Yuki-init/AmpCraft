@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Builds the Arch Linux package in an Arch container (against Arch's FFmpeg) and writes it
 # to dist/. Network is used only for the image build and cargo fetch.
-# Install on the host with: sudo pacman -U dist/openamp-*.pkg.tar.zst
+# Install on the host with: sudo pacman -U dist/ampcraft-*.pkg.tar.zst
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
-ARCH_IMAGE="${OPENAMP_ARCH_IMAGE:-localhost/openamp-arch:latest}"
+ARCH_IMAGE="${AMPCRAFT_ARCH_IMAGE:-localhost/ampcraft-arch:latest}"
 
 if [[ "${REBUILD_IMAGE:-0}" == "1" ]] || ! podman image exists "$ARCH_IMAGE"; then
     podman build --build-arg RUST_VERSION="$(rust_version)" -t "$ARCH_IMAGE" \
@@ -16,7 +16,7 @@ run() {
     podman run --rm --userns=keep-id --network="$network" --memory=8g --cpus=4 \
         --security-opt=no-new-privileges \
         -v "$REPO_ROOT":/work:Z -w /work/packaging/arch \
-        -v openamp-arch-cargo:/usr/local/cargo/registry:U \
+        -v ampcraft-arch-cargo:/usr/local/cargo/registry:U \
         -e HOME=/tmp -e RUSTUP_TOOLCHAIN="$(rust_version)" -e PKGDEST=/work/dist -e BUILDDIR=/work/packaging/arch \
         "$ARCH_IMAGE" "$@"
 }

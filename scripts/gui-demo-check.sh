@@ -1,19 +1,19 @@
 #!/bin/bash
-# Drives openamp-dock-demo under Xvfb with the openbox window manager, using xdotool, and
+# Drives ampcraft-dock-demo under Xvfb with the openbox window manager, using xdotool, and
 # prints window positions after each step. Screenshots go to .cache/demo-*.png.
 # Run inside the container: scripts/dev.sh scripts/gui-demo-check.sh
 set -u
-cargo build -q --bin openamp-dock-demo || exit 1
+cargo build -q --bin ampcraft-dock-demo || exit 1
 Xvfb :77 -screen 0 1280x1024x24 -nolisten tcp >/dev/null 2>&1 &
 XPID=$!
 export DISPLAY=:77
 sleep 1
 openbox >/dev/null 2>&1 &
 sleep 1
-target/debug/openamp-dock-demo >.cache/demo.log 2>&1 &
+target/debug/ampcraft-dock-demo >.cache/demo.log 2>&1 &
 DPID=$!
 sleep 2
-pos() { for n in OpenAMP Equalizer Playlist; do xwininfo -name "$n" | awk -v n="$n" '/Absolute upper-left X/{x=$4} /Absolute upper-left Y/{y=$4} /Width/{w=$2} /Height/{h=$2} END{printf "  %-10s %d,%d %dx%d\n", n, x, y, w, h}'; done; }
+pos() { for n in AmpCraft Equalizer Playlist; do xwininfo -name "$n" | awk -v n="$n" '/Absolute upper-left X/{x=$4} /Absolute upper-left Y/{y=$4} /Width/{w=$2} /Height/{h=$2} END{printf "  %-10s %d,%d %dx%d\n", n, x, y, w, h}'; done; }
 echo "start:"; pos
 import -window root .cache/demo-1-start.png
 # Drag the playlist by its title bar and drop it a few px off the EQ's bottom-left.

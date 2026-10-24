@@ -1,5 +1,5 @@
 [package]
-name = "amp-ui"
+name = "ampcraft-ui"
 description = "Software renderer, widgets, hit testing and UI state machine."
 version.workspace = true
 edition.workspace = true
@@ -12,5 +12,5 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-amp-dock = { version = "0.1.0", path = "../dock" }
-amp-skin = { version = "0.1.0", path = "../skin" }
+ampcraft-dock.workspace = true
+ampcraft-skin.workspace = true

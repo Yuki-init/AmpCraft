@@ -46,7 +46,7 @@ x11rb::atom_manager! {
         _NET_WM_STATE_SKIP_PAGER,
         _NET_WORKAREA,
         RESOURCE_MANAGER,
-        _OPENAMP_WAKE,
+        _AMPCRAFT_WAKE,
     }
 }
 
@@ -199,7 +199,7 @@ impl X11Platform {
 
         let (tx, events) = mpsc::channel();
         let reader = Arc::clone(&conn);
-        let wake = atoms._OPENAMP_WAKE;
+        let wake = atoms._AMPCRAFT_WAKE;
         let thread = std::thread::Builder::new()
             .name("x11-events".into())
             .spawn(move || {
@@ -542,7 +542,7 @@ impl Platform for X11Platform {
                 id,
                 AtomEnum::WM_CLASS,
                 AtomEnum::STRING,
-                b"openamp\0OpenAMP\0",
+                b"ampcraft\0AmpCraft\0",
             )
             .conn()?;
         self.conn
@@ -953,7 +953,7 @@ impl Drop for X11Platform {
             let _ = self.conn.destroy_window(id);
         }
         // Wake the event thread so it can exit.
-        let wake = ClientMessageEvent::new(32, self.control, self.atoms._OPENAMP_WAKE, [0u32; 5]);
+        let wake = ClientMessageEvent::new(32, self.control, self.atoms._AMPCRAFT_WAKE, [0u32; 5]);
         let _ = self
             .conn
             .send_event(false, self.control, EventMask::NO_EVENT, wake);

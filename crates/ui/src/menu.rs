@@ -3,11 +3,11 @@
 //! popup window. Everything here is in desktop pixels; the app forwards pointer positions in
 //! desktop coordinates and shows each level's bitmap at its rect.
 
-use amp_skin::{Bitmap, Skin};
+use ampcraft_skin::{Bitmap, Skin};
 
 use crate::text::{TextRenderer, TextStrip};
-use amp_dock::{Point, Rect as Area};
-use amp_skin::Rect;
+use ampcraft_dock::{Point, Rect as Area};
+use ampcraft_skin::Rect;
 
 /// Keysyms the menu understands (X11 values, the app's portable key codes).
 mod keys {

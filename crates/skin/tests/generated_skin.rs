@@ -2,12 +2,17 @@
 //! drawn from the wrong place is caught exactly.
 
 // Integration tests are test code; panicking on setup failure is the point.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::io::{Cursor, Write};
 
-use amp_skin::sprites::{main, numbers};
-use amp_skin::{Bitmap, Sheet, Skin, font, rgb};
+use ampcraft_skin::sprites::{main, numbers};
+use ampcraft_skin::{Bitmap, Sheet, Skin, font, rgb};
 use zip::write::SimpleFileOptions;
 
 /// Classic sheet sizes.
@@ -223,7 +228,10 @@ fn partial_skin_loads_with_warnings() {
     assert!(!skin.draw(&mut canvas, main::PLAY, 0, 0));
     assert_eq!(skin.draw_text(&mut canvas, "x", 0, 0), None);
     // Defaults for missing text files.
-    assert_eq!(skin.vis_colors(), &amp_skin::config::DEFAULT_VIS_COLORS);
+    assert_eq!(
+        skin.vis_colors(),
+        &ampcraft_skin::config::DEFAULT_VIS_COLORS
+    );
 }
 
 #[test]
@@ -254,7 +262,7 @@ fn archive_without_images_is_rejected() {
     z.add("readme.txt", b"hello");
     assert!(matches!(
         Skin::from_wsz(&z.finish()),
-        Err(amp_skin::SkinError::Empty)
+        Err(ampcraft_skin::SkinError::Empty)
     ));
 }
 
@@ -274,7 +282,7 @@ fn directory_skin_loads() {
 
 /// A theme exported as a .wsz with `drop` left out of the archive.
 fn theme_wsz_without(drop: &[&str]) -> Vec<u8> {
-    let full = amp_skin::theme::THEMES[0].export_wsz().unwrap();
+    let full = ampcraft_skin::theme::THEMES[0].export_wsz().unwrap();
     let mut src = zip::ZipArchive::new(Cursor::new(full)).unwrap();
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..src.len() {
@@ -301,13 +309,13 @@ fn skins_without_generic_art_get_it_in_their_own_colors() {
         "{:?}",
         skin.warnings()
     );
-    let colors = amp_skin::generic::GenExColors::from_skin(&skin);
+    let colors = ampcraft_skin::generic::GenExColors::from_skin(&skin);
     let style = skin.playlist_style();
     assert_eq!(colors.item_background, style.normal_bg | 0xFF00_0000);
     assert_eq!(colors.item_foreground, style.normal | 0xFF00_0000);
     // A skin that has its own generic art keeps it.
-    let full = Skin::from_wsz(&amp_skin::theme::THEMES[0].export_wsz().unwrap()).unwrap();
-    let theirs = amp_skin::theme::THEMES[0].skin();
+    let full = Skin::from_wsz(&ampcraft_skin::theme::THEMES[0].export_wsz().unwrap()).unwrap();
+    let theirs = ampcraft_skin::theme::THEMES[0].skin();
     assert_eq!(full.sheet(Sheet::Gen), theirs.sheet(Sheet::Gen));
 }
 

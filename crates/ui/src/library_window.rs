@@ -12,9 +12,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use amp_dock::Point;
-use amp_skin::generic::{self, GenExColors, button};
-use amp_skin::{Bitmap, Rect, Skin};
+use ampcraft_dock::Point;
+use ampcraft_skin::generic::{self, GenExColors, button};
+use ampcraft_skin::{Bitmap, Rect, Skin};
 
 use crate::text::{TextRenderer, TextStrip};
 

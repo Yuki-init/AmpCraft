@@ -6,14 +6,14 @@
 # Run inside the container: scripts/dev.sh scripts/gui-raise-check.sh
 set -u
 SKIN=${SKIN:-skins/base-2.91.wsz}
-cargo build -q --bin openamp || exit 1
+cargo build -q --bin ampcraft || exit 1
 Xvfb :81 -screen 0 1280x1024x24 -nolisten tcp >/dev/null 2>&1 &
 XPID=$!
 export DISPLAY=:81
 sleep 1
 openbox >/dev/null 2>&1 &
 sleep 1
-target/debug/openamp --audio null --skin "$SKIN" >.cache/raise.log 2>&1 &
+target/debug/ampcraft --audio null --skin "$SKIN" >.cache/raise.log 2>&1 &
 APID=$!
 sleep 2
 # Main 100..375 x 100..216, EQ below to 332, playlist below to 564. The other app covers

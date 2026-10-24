@@ -4,7 +4,7 @@
 //! all in desktop coordinates. This controller feeds them to the [`Layout`] and returns only
 //! the panels whose rectangles changed, so the platform moves no more windows than needed.
 
-use amp_dock::{Drag, Layout, PanelId, Point, Rect};
+use ampcraft_dock::{Drag, Layout, PanelId, Point, Rect};
 
 /// Panel moves to apply to real windows.
 pub type Moves = Vec<(PanelId, Rect)>;

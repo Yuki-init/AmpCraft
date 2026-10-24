@@ -1,8 +1,8 @@
 //! Resize grips: the bottom-right corner handle and the right and bottom edges of a
 //! resizable window (playlist, media library). Sizes snap to the classic steps.
 
-use amp_dock::Point;
-use amp_skin::Rect;
+use ampcraft_dock::Point;
+use ampcraft_skin::Rect;
 
 /// How far in from the right and bottom edges a press resizes.
 pub const EDGE: i32 = 3;

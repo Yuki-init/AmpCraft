@@ -2,7 +2,7 @@
 //! drawn in the skin's viscolor.txt palette (0 background, 1 grid dots, 2..17 spectrum top to
 //! bottom, 18..22 oscilloscope, 23 peaks).
 
-use amp_skin::{Bitmap, Rect};
+use ampcraft_skin::{Bitmap, Rect};
 
 /// Where the visualizer sits in the main window.
 pub const AREA: Rect = Rect::new(24, 43, 76, 16);

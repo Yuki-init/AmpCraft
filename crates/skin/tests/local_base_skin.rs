@@ -3,12 +3,17 @@
 //! it is absent.
 
 // Integration tests are test code; panicking on setup failure is the point.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::path::PathBuf;
 
-use amp_skin::sprites::{self, main};
-use amp_skin::{Sheet, Skin};
+use ampcraft_skin::sprites::{self, main};
+use ampcraft_skin::{Sheet, Skin};
 
 fn local_skin() -> Option<PathBuf> {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skins/base-2.91.wsz");
@@ -32,7 +37,7 @@ fn base_skin_matches_sprite_maps() {
         .iter()
         .chain(sprites::playlist::ALL)
         .chain(sprites::eq::ALL)
-        .chain(amp_skin::generic::ALL)
+        .chain(ampcraft_skin::generic::ALL)
     {
         let sheet = skin.sheet(s.sheet).unwrap();
         assert!(sheet.contains_rect(s.rect), "{s:?} outside {sheet:?}");
@@ -45,9 +50,9 @@ fn base_skin_matches_sprite_maps() {
     // glyph grid in the top 18 rows.
     let text = skin.sheet(Sheet::Text).unwrap();
     assert!(text.width() >= 155 && text.height() >= 18);
-    let letters = amp_skin::generic::GenLetters::scan(skin.sheet(Sheet::Gen).unwrap());
+    let letters = ampcraft_skin::generic::GenLetters::scan(skin.sheet(Sheet::Gen).unwrap());
     assert_eq!(letters.len(), 26, "A-Z title letters in GEN.BMP");
-    let colors = amp_skin::generic::GenExColors::from_skin(&skin);
+    let colors = ampcraft_skin::generic::GenExColors::from_skin(&skin);
     eprintln!("genex: {colors:?}");
     // Its region.txt is documentation only: every block is commented out.
     assert!(skin.regions().normal.is_empty());

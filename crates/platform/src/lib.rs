@@ -2,15 +2,17 @@
 //!
 //! The rest of the app talks to windows only through [`Platform`], and gets the backend for
 //! the OS it was built for as [`NativePlatform`]. Windows are borderless: the skin draws the
-//! title bar, and dragging is done by the app (see `amp-dock`), not by the window manager.
-//! Pixels are `0xAARRGGBB` rows, the same layout as `amp_skin::Bitmap`.
+//! title bar, and dragging is done by the app (see `ampcraft-dock`), not by the window manager.
+//! Pixels are `0xAARRGGBB` rows, the same layout as `ampcraft_skin::Bitmap`.
 
 use std::time::Duration;
 
-pub use amp_dock::{Point, Rect, Size};
+pub use ampcraft_dock::{Point, Rect, Size};
 
 pub mod dirs;
 #[cfg(windows)]
+// Win32 FFI is the one place unsafe is allowed until the egui port replaces it (docs/gaps.md).
+#[allow(unsafe_code)]
 pub mod win32;
 pub mod win32_keys;
 #[cfg(not(windows))]

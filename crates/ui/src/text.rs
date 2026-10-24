@@ -5,7 +5,7 @@
 //! [`TextRenderer`] supplied by the app, tinted with the skin's text colors, as the classic
 //! player does when its bitmap font cannot show a title.
 
-use amp_skin::{Bitmap, Rect, Sheet, Skin, font};
+use ampcraft_skin::{Bitmap, Rect, Sheet, Skin, font};
 
 /// Coverage mask produced by a fallback renderer: one alpha byte per pixel.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +35,7 @@ impl TextRenderer for NoFallback {
 /// Background and foreground colors of the skin's font, read from TEXT.BMP: the background
 /// is the space glyph's color and the foreground the most common other color in the glyphs.
 pub fn text_colors(skin: &Skin) -> (u32, u32) {
-    let default = (amp_skin::rgb(0, 0, 0), amp_skin::rgb(0, 226, 0));
+    let default = (ampcraft_skin::rgb(0, 0, 0), ampcraft_skin::rgb(0, 226, 0));
     let Some(text) = skin.sheet(Sheet::Text) else {
         return default;
     };
@@ -234,10 +234,10 @@ mod tests {
 
     fn skin_with_font() -> Skin {
         // TEXT.BMP: black background, green glyph pixels in the top-left of each cell.
-        let mut text = Bitmap::new(155, 18, amp_skin::rgb(0, 0, 0));
+        let mut text = Bitmap::new(155, 18, ampcraft_skin::rgb(0, 0, 0));
         for row in 0..3 {
             for col in 0..30 {
-                text.set(col * 5, row * 6, amp_skin::rgb(0, 200, 0));
+                text.set(col * 5, row * 6, ampcraft_skin::rgb(0, 200, 0));
             }
         }
         crate::test_skin::skin_from(&[(Sheet::Text, text)])
@@ -246,8 +246,8 @@ mod tests {
     #[test]
     fn colors_come_from_text_bmp() {
         let (bg, fg) = text_colors(&skin_with_font());
-        assert_eq!(bg, amp_skin::rgb(0, 0, 0));
-        assert_eq!(fg, amp_skin::rgb(0, 200, 0));
+        assert_eq!(bg, ampcraft_skin::rgb(0, 0, 0));
+        assert_eq!(fg, ampcraft_skin::rgb(0, 200, 0));
     }
 
     #[test]
@@ -262,12 +262,12 @@ mod tests {
         let skin = skin_with_font();
         let strip = TextStrip::new(&skin, &mut Blocks, "日本", 11);
         assert_eq!((strip.width(), strip.height()), (8, 11));
-        let mut dst = Bitmap::new(20, 20, amp_skin::rgb(9, 9, 9));
+        let mut dst = Bitmap::new(20, 20, ampcraft_skin::rgb(9, 9, 9));
         strip.draw(&mut dst, Rect::new(0, 0, 20, 20), 2, 0, false, 0);
-        assert_eq!(dst.get(0, 2), Some(amp_skin::rgb(0, 200, 0)));
+        assert_eq!(dst.get(0, 2), Some(ampcraft_skin::rgb(0, 200, 0)));
         assert_eq!(
             dst.get(3, 2),
-            Some(amp_skin::rgb(9, 9, 9)),
+            Some(ampcraft_skin::rgb(9, 9, 9)),
             "gap left untouched"
         );
     }

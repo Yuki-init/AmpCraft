@@ -6,7 +6,7 @@
 # warnings in <skin>.log.
 # Run inside the container: scripts/dev.sh scripts/skin-gallery.sh [SKIN.wsz...]
 set -u
-cargo build -q --bin openamp || exit 1
+cargo build -q --bin ampcraft || exit 1
 D=.cache/skin-gallery
 mkdir -p "$D"
 SKINS=("$@")
@@ -25,8 +25,8 @@ for s in "${SKINS[@]}"; do
     [[ -f "$s" ]] || { echo "no such skin: $s"; continue; }
     n=$(basename "$s" .wsz)
     rm -rf "$D/home"
-    export OPENAMP_CONFIG_DIR="$PWD/$D/home/config" OPENAMP_DATA_DIR="$PWD/$D/home/data" OPENAMP_LOG=warn
-    target/debug/openamp --audio null --skin "$s" --scale 1 --library "$D"/{A,B,C}.flac >"$D/$n.log" 2>&1 &
+    export AMPCRAFT_CONFIG_DIR="$PWD/$D/home/config" AMPCRAFT_DATA_DIR="$PWD/$D/home/data" AMPCRAFT_LOG=warn
+    target/debug/ampcraft --audio null --skin "$s" --scale 1 --library "$D"/{A,B,C}.flac >"$D/$n.log" 2>&1 &
     P=$!
     sleep 3
     xdotool mousemove 113 128 click 1; sleep 1                       # O: preferences

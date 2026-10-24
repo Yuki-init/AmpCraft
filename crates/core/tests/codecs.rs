@@ -1,14 +1,19 @@
 //! Codec and container coverage using fixtures encoded on the fly by the ffmpeg CLI.
 
 // Integration tests are test code; panicking on setup failure is the point.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 mod common;
 
 use std::path::Path;
 
-use amp_core::wav::WavFormat;
-use amp_core::{Player, PlayerConfig};
+use ampcraft_core::wav::WavFormat;
+use ampcraft_core::{Player, PlayerConfig};
 use common::*;
 
 const RATE: u32 = 44_100;
@@ -104,7 +109,7 @@ fn info_reports_codec_duration_and_tags() {
     ) else {
         return;
     };
-    let dec = amp_core::Decoder::open(&path, RATE).unwrap();
+    let dec = ampcraft_core::Decoder::open(&path, RATE).unwrap();
     let info = dec.info();
     assert_eq!(info.codec, "flac");
     assert_eq!(info.sample_rate, RATE);

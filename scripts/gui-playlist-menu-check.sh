@@ -5,10 +5,10 @@
 # Screenshots go to .cache/plmenu-*.png.
 # Run inside the container: scripts/dev.sh scripts/gui-playlist-menu-check.sh
 set -u
-cargo build -q --bin openamp || exit 1
+cargo build -q --bin ampcraft || exit 1
 G=.cache/gui-plmenu
 rm -rf "$G" && mkdir -p "$G"
-export OPENAMP_CONFIG_DIR="$PWD/$G/config" OPENAMP_DATA_DIR="$PWD/$G/data" OPENAMP_LOG=info
+export AMPCRAFT_CONFIG_DIR="$PWD/$G/config" AMPCRAFT_DATA_DIR="$PWD/$G/data" AMPCRAFT_LOG=info
 for t in "1 Charlie" "2 Alpha" "3 Bravo"; do
     set -- $t
     ffmpeg -v error -y -f lavfi -i "sine=f=440:d=5" -ac 2 -metadata title="$2" -c:a flac "$G/$1.flac"
@@ -26,7 +26,7 @@ menu_geo() {
         xwininfo -id "$id" | awk '/Absolute upper-left X/{x=$4} /Absolute upper-left Y/{y=$4} /Width/{w=$2} /Height/{h=$2} END{print x, y, w, h}'
     done | sort -n | sed -n "${1}p"
 }
-target/debug/openamp --audio null --skin dracula --scale 1 "$G/1.flac" "$G/2.flac" "$G/3.flac" >"$G/log" 2>&1 &
+target/debug/ampcraft --audio null --skin dracula --scale 1 "$G/1.flac" "$G/2.flac" "$G/3.flac" >"$G/log" 2>&1 &
 APID=$!
 sleep 3
 # Playlist at (100, 332), 275x232; bottom-bar buttons at y = 332 + 202.

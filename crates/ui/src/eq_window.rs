@@ -1,9 +1,9 @@
 //! The equalizer window: ON/AUTO toggles, preamp and ten band sliders, and the response
 //! graph. Values are in dB, ±12.
 
-use amp_dock::Point;
-use amp_skin::sprites::eq as sp;
-use amp_skin::{Bitmap, Rect, Sheet, Skin, Sprite};
+use ampcraft_dock::Point;
+use ampcraft_skin::sprites::eq as sp;
+use ampcraft_skin::{Bitmap, Rect, Sheet, Skin, Sprite};
 
 pub const WIDTH: i32 = 275;
 pub const HEIGHT: i32 = 116;

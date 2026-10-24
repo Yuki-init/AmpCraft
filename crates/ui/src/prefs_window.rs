@@ -7,9 +7,9 @@
 
 use std::collections::HashMap;
 
-use amp_dock::Point;
-use amp_skin::generic::{self, GenExColors, button};
-use amp_skin::{Bitmap, Rect, Skin};
+use ampcraft_dock::Point;
+use ampcraft_skin::generic::{self, GenExColors, button};
+use ampcraft_skin::{Bitmap, Rect, Skin};
 
 use crate::text::{TextRenderer, TextStrip};
 use crate::vis::VisMode;
@@ -56,6 +56,8 @@ pub struct PrefsState {
     /// Built-in theme names and the one in use.
     pub themes: Vec<String>,
     pub theme: Option<usize>,
+    /// The System theme (the desktop's colors) is in use.
+    pub system_theme: bool,
     /// A classic skin file in use, shown by name.
     pub skin_file: Option<String>,
     pub include_music: bool,
@@ -76,6 +78,8 @@ pub enum PrefsAction {
     SetVis(VisMode),
     SetDevice(Option<String>),
     SetTheme(usize),
+    /// Follow the desktop's colors.
+    SystemTheme,
     LoadSkinFile,
     SetIncludeMusic(bool),
     AddFolder,
@@ -307,7 +311,14 @@ impl PrefsWindow {
                 items
             }
             Page::Skins => {
-                let mut items = vec![heading("Built-in themes")];
+                let mut items = vec![
+                    heading("Built-in themes"),
+                    radio(
+                        "System colors (follow the desktop)",
+                        s.system_theme,
+                        PrefsAction::SystemTheme,
+                    ),
+                ];
                 for (i, name) in s.themes.iter().enumerate() {
                     items.push(radio(name, s.theme == Some(i), PrefsAction::SetTheme(i)));
                 }
@@ -717,6 +728,7 @@ mod tests {
             device: Some("hw0".into()),
             themes: vec!["Dracula".into(), "Nord".into()],
             theme: Some(1),
+            system_theme: false,
             include_music: true,
             music_dir: Some("/home/u/Music".into()),
             folders: vec!["/mnt/a".into(), "/mnt/b".into()],

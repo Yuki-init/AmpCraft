@@ -40,17 +40,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "amp-app"
+name = "ampcraft"
 version = "0.1.0"
 dependencies = [
- "amp-audio-out",
- "amp-core",
- "amp-dock",
- "amp-dsp",
- "amp-library",
- "amp-platform",
- "amp-skin",
- "amp-ui",
+ "ampcraft-audio-out",
+ "ampcraft-core",
+ "ampcraft-dock",
+ "ampcraft-dsp",
+ "ampcraft-library",
+ "ampcraft-platform",
+ "ampcraft-skin",
+ "ampcraft-ui",
  "anyhow",
  "clap",
  "fontdb",
@@ -65,7 +65,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "amp-audio-out"
+name = "ampcraft-audio-out"
 version = "0.1.0"
 dependencies = [
  "cpal",
@@ -74,7 +74,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "amp-core"
+name = "ampcraft-core"
 version = "0.1.0"
 dependencies = [
  "ffmpeg-next",
@@ -85,11 +85,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "amp-dock"
+name = "ampcraft-dock"
 version = "0.1.0"
 
 [[package]]
-name = "amp-dsp"
+name = "ampcraft-dsp"
 version = "0.1.0"
 dependencies = [
  "rtrb",
@@ -98,10 +98,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "amp-library"
+name = "ampcraft-library"
 version = "0.1.0"
 dependencies = [
- "amp-core",
+ "ampcraft-core",
  "log",
  "rusqlite",
  "tempfile",
@@ -109,11 +109,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "amp-platform"
+name = "ampcraft-platform"
 version = "0.1.0"
 dependencies = [
- "amp-dock",
- "amp-ui",
+ "ampcraft-dock",
+ "ampcraft-ui",
  "log",
  "thiserror 2.0.21",
  "windows-sys",
@@ -121,7 +121,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "amp-skin"
+name = "ampcraft-skin"
 version = "0.1.0"
 dependencies = [
  "image",
@@ -132,11 +132,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "amp-ui"
+name = "ampcraft-ui"
 version = "0.1.0"
 dependencies = [
- "amp-dock",
- "amp-skin",
+ "ampcraft-dock",
+ "ampcraft-skin",
 ]
 
 [[package]]
@@ -2171,6 +2171,10 @@ name = "xcursor"
 version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "163b33ed8786455e2fa5d72f554057ce3f3182425434f756cd39c99839d88e23"
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
 
 [[package]]
 name = "yazi"

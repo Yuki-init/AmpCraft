@@ -6,9 +6,9 @@
 
 use std::time::Duration;
 
-use amp_dock::Point;
-use amp_skin::sprites::{self, Sprite, main, numbers};
-use amp_skin::{Bitmap, Rect, Sheet, Skin};
+use ampcraft_dock::Point;
+use ampcraft_skin::sprites::{self, Sprite, main, numbers};
+use ampcraft_skin::{Bitmap, Rect, Sheet, Skin};
 
 use crate::text::{TextRenderer, TextStrip};
 

@@ -7,9 +7,9 @@
 use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 
-use amp_dock::Point;
-use amp_skin::sprites::playlist as sp;
-use amp_skin::{Bitmap, Rect, Skin, Sprite};
+use ampcraft_dock::Point;
+use ampcraft_skin::sprites::playlist as sp;
+use ampcraft_skin::{Bitmap, Rect, Skin, Sprite};
 
 use crate::main_window::{Action, NowPlaying, PlayState};
 use crate::text::{TextRenderer, TextStrip};
@@ -1258,7 +1258,7 @@ mod tests {
     use super::*;
     use crate::test_skin::{code, coded_skin};
     use crate::text::NoFallback;
-    use amp_skin::Sheet;
+    use ampcraft_skin::Sheet;
 
     fn entries(n: u64) -> Vec<PlaylistEntry> {
         (1..=n)

@@ -2,6 +2,7 @@
 //! (scripts/test-windows.sh). Input is injected with SendInput, like a real user.
 
 #![cfg(windows)]
+#![allow(unsafe_code)]
 // Integration tests are test code; panicking on setup failure is the point.
 #![allow(
     clippy::unwrap_used,
@@ -11,8 +12,8 @@
 
 use std::time::{Duration, Instant};
 
-use amp_platform::win32::Win32Platform;
-use amp_platform::{
+use ampcraft_platform::win32::Win32Platform;
+use ampcraft_platform::{
     Event, MouseButton, Platform, Point, Rect, Size, WindowId, WindowKind, WindowSpec, keys,
 };
 use windows_sys::Win32::Foundation::{HWND, RECT};
@@ -199,7 +200,7 @@ fn presented_pixels_reach_the_window(p: &mut Win32Platform) {
     unsafe { ReleaseDC(hwnd, hdc) };
     assert!(matches!(
         p.present(id, Size::new(40, 30), &pixels[1..]),
-        Err(amp_platform::PlatformError::BadBuffer { .. })
+        Err(ampcraft_platform::PlatformError::BadBuffer { .. })
     ));
     p.destroy_window(id).unwrap();
     assert!(

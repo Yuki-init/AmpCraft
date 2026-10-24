@@ -4,16 +4,21 @@
 // There is no X11 backend on Windows.
 #![cfg(not(windows))]
 // Integration tests are test code; panicking on setup failure is the point.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::time::{Duration, Instant};
 
-use amp_dock::{Layout, PanelId};
-use amp_platform::x11::X11Platform;
-use amp_platform::{
+use ampcraft_dock::{Layout, PanelId};
+use ampcraft_platform::x11::X11Platform;
+use ampcraft_platform::{
     Event, MouseButton, Platform, Point, Rect, Size, WindowId, WindowKind, WindowSpec,
 };
-use amp_ui::DockDrag;
+use ampcraft_ui::DockDrag;
 use x11rb::connection::Connection;
 use x11rb::protocol::shape::{ConnectionExt as _, SK};
 use x11rb::protocol::xproto::{self, ConnectionExt as _};
@@ -227,7 +232,7 @@ fn injected_clicks_arrive_with_local_and_root_coordinates() {
             button: MouseButton::Left,
             local: Point::new(30, 20),
             root: Point::new(230, 170),
-            mods: amp_platform::Modifiers::default(),
+            mods: ampcraft_platform::Modifiers::default(),
         }
     );
     probe.button(false);
@@ -536,17 +541,18 @@ fn resize_cursors_are_set_and_cleared() {
     let id = shown(&mut p, "cursor", Rect::new(0, 0, 40, 40));
     // The container has no cursor theme: the X cursor font is the fallback, so this
     // exercises the whole path without a desktop.
-    p.set_cursor(id, amp_platform::CursorShape::ResizeCorner)
+    p.set_cursor(id, ampcraft_platform::CursorShape::ResizeCorner)
         .unwrap();
-    p.set_cursor(id, amp_platform::CursorShape::ResizeCorner)
+    p.set_cursor(id, ampcraft_platform::CursorShape::ResizeCorner)
         .unwrap();
-    p.set_cursor(id, amp_platform::CursorShape::ResizeRight)
+    p.set_cursor(id, ampcraft_platform::CursorShape::ResizeRight)
         .unwrap();
-    p.set_cursor(id, amp_platform::CursorShape::Arrow).unwrap();
+    p.set_cursor(id, ampcraft_platform::CursorShape::Arrow)
+        .unwrap();
     // A round trip proves the server accepted every request.
     p.pointer().unwrap();
     assert!(
-        p.set_cursor(WindowId(999_999), amp_platform::CursorShape::Arrow)
+        p.set_cursor(WindowId(999_999), ampcraft_platform::CursorShape::Arrow)
             .is_err()
     );
 }

@@ -177,6 +177,85 @@ pub fn find(name: &str) -> Option<&'static Theme> {
     })
 }
 
+/// Id of the theme built from the desktop's own colors, the default when no skin is chosen.
+pub const SYSTEM_ID: &str = "system";
+
+impl Theme {
+    /// The "System" theme: `palette` (from the desktop's color scheme), with its display
+    /// color adjusted so display text stays readable.
+    pub fn system(palette: Palette) -> Theme {
+        Theme {
+            id: SYSTEM_ID,
+            name: "System",
+            palette: palette.readable(),
+        }
+    }
+}
+
+impl Palette {
+    /// Neutral greys for a dark or light desktop, tinted with the desktop's `accent` color
+    /// when it has one. Used when the desktop gives no full color scheme.
+    pub fn neutral(dark: bool, accent: Option<u32>) -> Palette {
+        let mut p = if dark {
+            Palette {
+                crust: hex(0x161616),
+                base: hex(0x242424),
+                surface: hex(0x303030),
+                overlay: hex(0x4a4a4a),
+                text: hex(0xeeeeee),
+                subtext: hex(0xb4b4b4),
+                accent: hex(0x5294e2),
+                selection: hex(0x3a3a3a),
+                red: hex(0xe5534b),
+                orange: hex(0xf0883e),
+                yellow: hex(0xe3b341),
+                green: hex(0x57ab5a),
+                cyan: hex(0x39c5cf),
+            }
+        } else {
+            Palette {
+                crust: hex(0xffffff),
+                base: hex(0xebebeb),
+                surface: hex(0xf6f6f6),
+                overlay: hex(0xc4c4c4),
+                text: hex(0x1f1f1f),
+                subtext: hex(0x5c5c5c),
+                accent: hex(0x1a73e8),
+                selection: hex(0xd6d6d6),
+                red: hex(0xc62828),
+                orange: hex(0xd84315),
+                yellow: hex(0xa17f00),
+                green: hex(0x2e7d32),
+                cyan: hex(0x00838f),
+            }
+        };
+        if let Some(a) = accent {
+            p.accent = 0xFF00_0000 | a;
+            p.selection = mix(p.base, p.accent, 0.35);
+        }
+        p
+    }
+
+    /// Whether this is a dark palette (text lighter than the window background).
+    pub fn is_dark(&self) -> bool {
+        luma(self.text) > luma(self.base)
+    }
+
+    /// Moves the display color toward the text color until display text reads against the
+    /// display background at 4.5:1 (WCAG AA), keeping as much of its hue as it can.
+    pub fn readable(mut self) -> Palette {
+        let original = self.accent;
+        for step in 0..=10u8 {
+            let candidate = mix(original, self.text, f32::from(step) / 10.0);
+            self.accent = candidate;
+            if contrast(candidate, self.crust) >= 4.5 {
+                break;
+            }
+        }
+        self
+    }
+}
+
 // ---------------------------------------------------------------------------------------
 // Painting helpers
 
@@ -1343,7 +1422,7 @@ impl Theme {
             (
                 "README.TXT",
                 format!(
-                    "{} theme for OpenAMP, generated from the {} color scheme.\r\nOriginal artwork drawn by the player's built-in theme generator.\r\n",
+                    "{} theme for AmpCraft, generated from the {} color scheme.\r\nOriginal artwork drawn by the player's built-in theme generator.\r\n",
                     self.name, self.name
                 ),
             ),
@@ -1356,8 +1435,7 @@ impl Theme {
 
     /// Contrast ratio between display text and its background (WCAG formula).
     pub fn display_contrast(&self) -> f32 {
-        let (a, b) = (luma(self.palette.accent), luma(self.palette.crust));
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+        contrast(self.palette.accent, self.palette.crust)
     }
 }
 
@@ -1529,6 +1607,26 @@ mod tests {
                 t.id
             );
         }
+    }
+
+    #[test]
+    fn system_themes_have_readable_displays() {
+        // KDE Breeze Light: its blue on a white display is only about 2.6:1 as given.
+        let breeze = Palette {
+            accent: hex(0x3daee9),
+            ..Palette::neutral(false, None)
+        };
+        for p in [
+            breeze,
+            Palette::neutral(true, None),
+            Palette::neutral(false, Some(0x3daee9)),
+        ] {
+            let t = Theme::system(p);
+            assert_eq!(t.id, SYSTEM_ID);
+            assert!(t.display_contrast() >= 4.5, "{:.1}", t.display_contrast());
+        }
+        assert!(Palette::neutral(true, None).is_dark());
+        assert!(!Palette::neutral(false, None).is_dark());
     }
 
     #[test]

@@ -1,0 +1,19 @@
+AmpCraft
+Copyright (c) 2026 Yuki-init and the AmpCraft contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE).
+
+AmpCraft is an independent project built to the conventions of the ArtCraft Crafting Apps. It
+is not made or endorsed by the ArtCraft Team. It is not affiliated with Winamp, Nullsoft or
+their owners; "Winamp" is named only to describe skin format compatibility.
+
+Third-party material
+
+The per-file list (author, source, license) is in ATTRIBUTION.md.
+
+- FFmpeg (libavcodec, libavformat, libavutil, libswresample) is linked dynamically and is not
+  part of this source tree. Builds use LGPL-only FFmpeg configurations. Windows packages ship
+  the FFmpeg DLLs unmodified with FFMPEG-LICENSE.txt and FFMPEG-SOURCE.txt, which name the
+  exact build and where its source is.
+- Rust crates from crates.io under permissive licenses (see deny.toml for the allowed list;
+  `cargo deny check licenses` verifies them).

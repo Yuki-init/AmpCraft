@@ -3,6 +3,6 @@
 x11 = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'package(amp-platform) & kind(test)'
+filter = 'package(ampcraft-platform) & kind(test)'
 test-group = 'x11'
 slow-timeout = { period = "30s", terminate-after = 2 }

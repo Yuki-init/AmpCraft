@@ -3,11 +3,11 @@
 //!
 //! | | config | data / cache | music |
 //! |---|---|---|---|
-//! | Linux | `$XDG_CONFIG_HOME/openamp` | XDG data / cache dirs | `XDG_MUSIC_DIR` from `user-dirs.dirs` |
-//! | macOS | `~/Library/Application Support/OpenAMP` | same / `~/Library/Caches/OpenAMP` | `~/Music` |
-//! | Windows | `%USERPROFILE%\.config\openamp` (owner's choice) | `%LOCALAPPDATA%\openamp` | Music known folder |
+//! | Linux | `$XDG_CONFIG_HOME/ampcraft` | XDG data / cache dirs | `XDG_MUSIC_DIR` from `user-dirs.dirs` |
+//! | macOS | `~/Library/Application Support/AmpCraft` | same / `~/Library/Caches/AmpCraft` | `~/Music` |
+//! | Windows | `%USERPROFILE%\.config\ampcraft` (owner's choice) | `%LOCALAPPDATA%\ampcraft` | Music known folder |
 //!
-//! `OPENAMP_CONFIG_DIR`, `OPENAMP_DATA_DIR`, `OPENAMP_CACHE_DIR` and `OPENAMP_MUSIC_DIR`
+//! `AMPCRAFT_CONFIG_DIR`, `AMPCRAFT_DATA_DIR`, `AMPCRAFT_CACHE_DIR` and `AMPCRAFT_MUSIC_DIR`
 //! override the result (used by tests and `scripts/host-run.sh`).
 //!
 //! The decision logic is a pure function of [`Env`], so every OS is tested on any OS.
@@ -15,9 +15,9 @@
 use std::path::{Path, PathBuf};
 
 /// Directory name on Linux and Windows.
-const APP: &str = "openamp";
+const APP: &str = "ampcraft";
 /// Directory name on macOS, where folders are conventionally capitalized.
-const APP_MAC: &str = "OpenAMP";
+const APP_MAC: &str = "AmpCraft";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Os {
@@ -42,7 +42,7 @@ impl Os {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Env {
     pub home: Option<PathBuf>,
-    /// Environment variables that matter (XDG_*, LOCALAPPDATA, OPENAMP_*).
+    /// Environment variables that matter (XDG_*, LOCALAPPDATA, AMPCRAFT_*).
     pub vars: Vec<(String, PathBuf)>,
     /// Contents of `user-dirs.dirs` (Linux).
     pub user_dirs: Option<String>,
@@ -68,10 +68,10 @@ impl Env {
             "LOCALAPPDATA",
             "USERPROFILE",
             "HOME",
-            "OPENAMP_CONFIG_DIR",
-            "OPENAMP_DATA_DIR",
-            "OPENAMP_CACHE_DIR",
-            "OPENAMP_MUSIC_DIR",
+            "AMPCRAFT_CONFIG_DIR",
+            "AMPCRAFT_DATA_DIR",
+            "AMPCRAFT_CACHE_DIR",
+            "AMPCRAFT_MUSIC_DIR",
         ];
         let vars: Vec<(String, PathBuf)> = names
             .iter()
@@ -214,11 +214,11 @@ pub fn resolve(os: Os, env: &Env) -> AppDirs {
     };
     let pick = |var: &str, default: PathBuf| env.var(var).map_or(default, Path::to_path_buf);
     AppDirs {
-        config: pick("OPENAMP_CONFIG_DIR", config),
-        data: pick("OPENAMP_DATA_DIR", data),
-        cache: pick("OPENAMP_CACHE_DIR", cache),
+        config: pick("AMPCRAFT_CONFIG_DIR", config),
+        data: pick("AMPCRAFT_DATA_DIR", data),
+        cache: pick("AMPCRAFT_CACHE_DIR", cache),
         music: env
-            .var("OPENAMP_MUSIC_DIR")
+            .var("AMPCRAFT_MUSIC_DIR")
             .map(Path::to_path_buf)
             .or(music),
     }
@@ -226,6 +226,8 @@ pub fn resolve(os: Os, env: &Env) -> AppDirs {
 
 /// The Music known folder, which follows the user if they moved it (for example to OneDrive).
 #[cfg(windows)]
+// Win32 FFI is the one place unsafe is allowed until the egui port replaces it (docs/gaps.md).
+#[allow(unsafe_code)]
 fn known_music_folder() -> Option<PathBuf> {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::System::Com::CoTaskMemFree;
@@ -280,13 +282,13 @@ mod tests {
     #[test]
     fn linux_defaults() {
         let d = resolve(Os::Linux, &env("/home/u", &[]));
-        assert_eq!(d.config, PathBuf::from("/home/u/.config/openamp"));
-        assert_eq!(d.data, PathBuf::from("/home/u/.local/share/openamp"));
-        assert_eq!(d.cache, PathBuf::from("/home/u/.cache/openamp"));
+        assert_eq!(d.config, PathBuf::from("/home/u/.config/ampcraft"));
+        assert_eq!(d.data, PathBuf::from("/home/u/.local/share/ampcraft"));
+        assert_eq!(d.cache, PathBuf::from("/home/u/.cache/ampcraft"));
         assert_eq!(d.music, Some(PathBuf::from("/home/u/Music")));
         assert_eq!(
             d.config_file(),
-            PathBuf::from("/home/u/.config/openamp/config.toml")
+            PathBuf::from("/home/u/.config/ampcraft/config.toml")
         );
     }
 
@@ -303,11 +305,11 @@ mod tests {
                 ],
             ),
         );
-        assert_eq!(d.config, PathBuf::from("/cfg/openamp"));
-        assert_eq!(d.data, PathBuf::from("/data/openamp"));
+        assert_eq!(d.config, PathBuf::from("/cfg/ampcraft"));
+        assert_eq!(d.data, PathBuf::from("/data/ampcraft"));
         assert_eq!(
             d.cache,
-            PathBuf::from("/home/u/.cache/openamp"),
+            PathBuf::from("/home/u/.cache/ampcraft"),
             "empty means unset"
         );
     }
@@ -340,10 +342,10 @@ mod tests {
         let d = resolve(Os::MacOs, &env("/Users/u", &[]));
         assert_eq!(
             d.config,
-            PathBuf::from("/Users/u/Library/Application Support/OpenAMP")
+            PathBuf::from("/Users/u/Library/Application Support/AmpCraft")
         );
         assert_eq!(d.data, d.config);
-        assert_eq!(d.cache, PathBuf::from("/Users/u/Library/Caches/OpenAMP"));
+        assert_eq!(d.cache, PathBuf::from("/Users/u/Library/Caches/AmpCraft"));
         assert_eq!(d.music, Some(PathBuf::from("/Users/u/Music")));
     }
 
@@ -355,11 +357,11 @@ mod tests {
         );
         e.known_music = Some(PathBuf::from("D:/OneDrive/Music"));
         let d = resolve(Os::Windows, &e);
-        assert_eq!(d.config, PathBuf::from("C:/Users/u/.config/openamp"));
-        assert_eq!(d.data, PathBuf::from("C:/Users/u/AppData/Local/openamp"));
+        assert_eq!(d.config, PathBuf::from("C:/Users/u/.config/ampcraft"));
+        assert_eq!(d.data, PathBuf::from("C:/Users/u/AppData/Local/ampcraft"));
         assert_eq!(
             d.cache,
-            PathBuf::from("C:/Users/u/AppData/Local/openamp/cache")
+            PathBuf::from("C:/Users/u/AppData/Local/ampcraft/cache")
         );
         assert_eq!(d.music, Some(PathBuf::from("D:/OneDrive/Music")));
         e.known_music = None;
@@ -377,10 +379,10 @@ mod tests {
                 &env(
                     "/h",
                     &[
-                        ("OPENAMP_CONFIG_DIR", "/o/c"),
-                        ("OPENAMP_DATA_DIR", "/o/d"),
-                        ("OPENAMP_CACHE_DIR", "/o/x"),
-                        ("OPENAMP_MUSIC_DIR", "/o/m"),
+                        ("AMPCRAFT_CONFIG_DIR", "/o/c"),
+                        ("AMPCRAFT_DATA_DIR", "/o/d"),
+                        ("AMPCRAFT_CACHE_DIR", "/o/x"),
+                        ("AMPCRAFT_MUSIC_DIR", "/o/m"),
                     ],
                 ),
             );
@@ -400,6 +402,6 @@ mod tests {
     #[test]
     fn missing_home_does_not_panic() {
         let d = resolve(Os::Linux, &Env::default());
-        assert!(d.config.ends_with("openamp/openamp") || d.config.ends_with("openamp"));
+        assert!(d.config.ends_with("ampcraft/ampcraft") || d.config.ends_with("ampcraft"));
     }
 }

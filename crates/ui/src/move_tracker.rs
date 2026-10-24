@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use amp_dock::Point;
+use ampcraft_dock::Point;
 
 /// Most requests kept per window; older ones are assumed lost.
 const MAX_IN_FLIGHT: usize = 64;

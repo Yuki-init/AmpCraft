@@ -1,5 +1,5 @@
 [package]
-name = "amp-dsp"
+name = "ampcraft-dsp"
 description = "DSP: 10-band equalizer, preamp, spectrum and oscilloscope taps."
 version.workspace = true
 edition.workspace = true

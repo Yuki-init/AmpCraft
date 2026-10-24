@@ -1,8 +1,8 @@
 //! The classic generic-window frame (GEN.BMP) and GENEX buttons, shared by the media library
 //! and preferences windows.
 
-use amp_skin::generic::{self, GenLetters, button};
-use amp_skin::{Bitmap, Rect, Sheet, Skin, Sprite};
+use ampcraft_skin::generic::{self, GenLetters, button};
+use ampcraft_skin::{Bitmap, Rect, Sheet, Skin, Sprite};
 
 /// Close button position in a `w` wide generic window.
 pub fn close_rect(w: i32) -> Rect {

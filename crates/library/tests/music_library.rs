@@ -1,21 +1,26 @@
 //! Opt-in: scans part of the owner's music library into a temporary database. Runs only when
-//! `WINAMP_RS_MUSIC_DIR` exists. The library is only read; output is aggregate counts only.
+//! `AMPCRAFT_TEST_MUSIC_DIR` exists. The library is only read; output is aggregate counts only.
 
 // Integration tests are test code; panicking on setup failure is the point.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::path::PathBuf;
 use std::time::Instant;
 
-use amp_library::{FfmpegTags, Library};
+use ampcraft_library::{FfmpegTags, Library};
 
 /// Album folders scanned per run, so the test stays bounded on a large or slow drive.
 const FOLDERS: usize = 3;
 
 #[test]
 fn scan_sample_of_real_library() {
-    let Some(root) = std::env::var_os("WINAMP_RS_MUSIC_DIR").map(PathBuf::from) else {
-        eprintln!("WINAMP_RS_MUSIC_DIR not set, skipping");
+    let Some(root) = std::env::var_os("AMPCRAFT_TEST_MUSIC_DIR").map(PathBuf::from) else {
+        eprintln!("AMPCRAFT_TEST_MUSIC_DIR not set, skipping");
         return;
     };
     if !root.is_dir() {
@@ -47,7 +52,7 @@ fn scan_sample_of_real_library() {
             next.iter()
                 .filter(|d| {
                     std::fs::read_dir(d)
-                        .map(|rd| rd.flatten().any(|e| amp_library::is_audio(&e.path())))
+                        .map(|rd| rd.flatten().any(|e| ampcraft_library::is_audio(&e.path())))
                         .unwrap_or(false)
                 })
                 .cloned(),

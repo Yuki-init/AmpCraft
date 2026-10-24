@@ -5,10 +5,10 @@
 # Run inside the container: scripts/dev.sh scripts/gui-eq-check.sh   (SKIN=... to change)
 set -u
 SKIN=${SKIN:-dracula}
-cargo build -q --bin openamp || exit 1
+cargo build -q --bin ampcraft || exit 1
 G=.cache/gui-eq
 rm -rf "$G" && mkdir -p "$G"
-export OPENAMP_CONFIG_DIR="$PWD/$G/config" OPENAMP_DATA_DIR="$PWD/$G/data" OPENAMP_LOG=info
+export AMPCRAFT_CONFIG_DIR="$PWD/$G/config" AMPCRAFT_DATA_DIR="$PWD/$G/data" AMPCRAFT_LOG=info
 Xvfb :99 -screen 0 1024x768x24 -nolisten tcp >/dev/null 2>&1 &
 XPID=$!
 export DISPLAY=:99
@@ -22,7 +22,7 @@ menu_geo() {
         xwininfo -id "$id" | awk '/Absolute upper-left X/{x=$4} /Absolute upper-left Y/{y=$4} /Width/{w=$2} /Height/{h=$2} END{print x, y, w, h}'
     done | sort -n | sed -n "${1}p"
 }
-target/debug/openamp --audio null --skin "$SKIN" --scale 1 >"$G/log" 2>&1 &
+target/debug/ampcraft --audio null --skin "$SKIN" --scale 1 >"$G/log" 2>&1 &
 APID=$!
 sleep 2
 EX=100; EY=216                                  # equalizer window

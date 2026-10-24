@@ -495,7 +495,7 @@ impl Win32Platform {
         // SAFETY: a plain process-wide setting, made before any window exists.
         unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
 
-        let class = wide("OpenAMPWindow");
+        let class = wide("AmpCraftWindow");
         // SAFETY: a null module name means this executable.
         let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
         let load = |name| {

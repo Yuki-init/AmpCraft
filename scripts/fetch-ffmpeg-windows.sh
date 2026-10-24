@@ -14,7 +14,7 @@ NAME="ffmpeg-n8.1.3-17-gc389840894-win64-lgpl-shared-8.1"
 SHA256="ba651b56d78b2a09a92d3699fd7751254e8b773dc2c3110081b7f9f4ff3b2c48"
 
 dest="$REPO_ROOT/.cache/ffmpeg-win64"
-stamp="$dest/.openamp-sha256"
+stamp="$dest/.ampcraft-sha256"
 url="https://github.com/BtbN/FFmpeg-Builds/releases/download/$TAG/$NAME.zip"
 if [[ -f "$stamp" && "$(cat "$stamp")" == "$SHA256" ]]; then
     echo "Windows FFmpeg already in .cache/ffmpeg-win64 ($NAME)"
@@ -31,7 +31,7 @@ else
         unzip -q "$tmp/$name.zip" -d "$tmp"
         mv "$tmp/$name" /work/.cache/ffmpeg-win64
         rm -rf "$tmp"
-        echo "$sum" > /work/.cache/ffmpeg-win64/.openamp-sha256
+        echo "$sum" > /work/.cache/ffmpeg-win64/.ampcraft-sha256
     ' _ "$url" "$NAME" "$SHA256"
     echo "Windows FFmpeg ready in .cache/ffmpeg-win64 ($NAME)"
 fi
@@ -40,7 +40,7 @@ fi
 # The version name is `git describe` output: the commit hash follows "-g".
 commit="${NAME#*-g}"
 commit="${commit%%-*}"
-cat > "$dest/.openamp-source.txt" <<EOF
+cat > "$dest/.ampcraft-source.txt" <<EOF
 The FFmpeg DLLs in this folder (avcodec, avformat, avutil, swresample) are FFmpeg, licensed
 under the GNU Lesser General Public License version 3 (this build is configured for LGPL
 version 3; the full text is in FFMPEG-LICENSE.txt).

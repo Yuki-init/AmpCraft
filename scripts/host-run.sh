@@ -6,7 +6,7 @@
 #
 # Usage: scripts/host-run.sh [--debug] BIN [ARGS...]
 # Builds optimized (release) binaries by default; --debug builds faster but runs far slower.
-# Example: scripts/host-run.sh openamp-cli play --volume 30 song.flac
+# Example: scripts/host-run.sh ampcraft --volume 30 song.flac
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 profile=release
@@ -24,9 +24,9 @@ out="$REPO_ROOT/.cache/host-bin"
 # so development runs never write to the home directory. HOST_RUN_REAL_DIRS=1 uses the
 # normal per-OS locations.
 if [[ "${HOST_RUN_REAL_DIRS:-0}" != "1" ]]; then
-    export OPENAMP_CONFIG_DIR="$REPO_ROOT/.cache/host-home/config"
-    export OPENAMP_DATA_DIR="$REPO_ROOT/.cache/host-home/data"
-    export OPENAMP_CACHE_DIR="$REPO_ROOT/.cache/host-home/cache"
+    export AMPCRAFT_CONFIG_DIR="$REPO_ROOT/.cache/host-home/config"
+    export AMPCRAFT_DATA_DIR="$REPO_ROOT/.cache/host-home/data"
+    export AMPCRAFT_CACHE_DIR="$REPO_ROOT/.cache/host-home/cache"
 fi
 mkdir -p "$out"
 # Sonames the host already provides; the container copies only the rest.

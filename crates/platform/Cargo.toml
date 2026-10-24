@@ -1,5 +1,5 @@
 [package]
-name = "amp-platform"
+name = "ampcraft-platform"
 description = "Platform traits and the X11 backend."
 version.workspace = true
 edition.workspace = true
@@ -12,12 +12,12 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-amp-dock = { version = "0.1.0", path = "../dock" }
+ampcraft-dock.workspace = true
 log = "0.4.34"
 thiserror = "2.0.21"
 
 [dev-dependencies]
-amp-ui = { path = "../ui" }
+ampcraft-ui.workspace = true
 
 [target."cfg(not(windows))".dependencies]
 x11rb = { version = "0.14.0", features = ["shape", "randr", "xtest", "cursor"] }

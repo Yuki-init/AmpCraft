@@ -4,10 +4,10 @@
 # and current track are checked after quitting. Screenshots go to .cache/pl5-*.png.
 # Run inside the container: scripts/dev.sh scripts/gui-playlist-5x-check.sh
 set -u
-cargo build -q --bin openamp || exit 1
+cargo build -q --bin ampcraft || exit 1
 G=.cache/gui-pl5
 rm -rf "$G" && mkdir -p "$G"
-export OPENAMP_CONFIG_DIR="$PWD/$G/config" OPENAMP_DATA_DIR="$PWD/$G/data" OPENAMP_LOG=info
+export AMPCRAFT_CONFIG_DIR="$PWD/$G/config" AMPCRAFT_DATA_DIR="$PWD/$G/data" AMPCRAFT_LOG=info
 for t in A B C D; do
     ffmpeg -v error -y -f lavfi -i "sine=f=440:d=60" -ac 2 -metadata title="$t" -c:a flac "$G/$t.flac"
 done
@@ -24,7 +24,7 @@ menu_geo() {
         xwininfo -id "$id" | awk '/Absolute upper-left X/{x=$4} /Absolute upper-left Y/{y=$4} /Width/{w=$2} /Height/{h=$2} END{print x, y, w, h}'
     done | sort -n | sed -n "${1}p"
 }
-target/debug/openamp --audio null --skin dracula --scale 1 "$G"/{A,B,C,D}.flac >"$G/log" 2>&1 &
+target/debug/ampcraft --audio null --skin dracula --scale 1 "$G"/{A,B,C,D}.flac >"$G/log" 2>&1 &
 APID=$!
 sleep 3
 xdotool key x; sleep 0.5                         # stop the autoplay restart: play from A

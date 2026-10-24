@@ -1,7 +1,7 @@
 //! Audio output: device stream, volume and balance.
 //!
 //! The output pulls interleaved stereo `f32` from a render closure (normally
-//! `amp_core::PcmSource::fill`), applies volume and balance, and converts to whatever the
+//! `ampcraft_core::PcmSource::fill`), applies volume and balance, and converts to whatever the
 //! device wants. The callback never allocates or locks: scratch space is allocated up front
 //! and controls are atomics.
 

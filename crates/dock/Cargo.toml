@@ -1,5 +1,5 @@
 [package]
-name = "amp-dock"
+name = "ampcraft-dock"
 description = "Docking math: panel graph, edge snapping and group drag. Pure, no I/O."
 version.workspace = true
 edition.workspace = true

@@ -4,10 +4,10 @@
 # steps, doubled). Screenshot goes to .cache/resize.png.
 # Run inside the container: scripts/dev.sh scripts/gui-resize-check.sh
 set -u
-cargo build -q --bin openamp || exit 1
+cargo build -q --bin ampcraft || exit 1
 G=.cache/gui-resize
 rm -rf "$G" && mkdir -p "$G"
-export OPENAMP_CONFIG_DIR="$PWD/$G/config" OPENAMP_DATA_DIR="$PWD/$G/data"
+export AMPCRAFT_CONFIG_DIR="$PWD/$G/config" AMPCRAFT_DATA_DIR="$PWD/$G/data"
 Xvfb :96 -screen 0 2560x1600x24 -nolisten tcp >/dev/null 2>&1 &
 XPID=$!
 export DISPLAY=:96
@@ -24,7 +24,7 @@ drag() {
     xdotool mousemove $(($1 + $3)) $(($2 + $4)); sleep 0.2
     xdotool mouseup 1; sleep 0.4
 }
-target/debug/openamp --audio null --skin dracula --scale 2 --library >"$G/log" 2>&1 &
+target/debug/ampcraft --audio null --skin dracula --scale 2 --library >"$G/log" 2>&1 &
 APID=$!
 sleep 3
 for n in Playlist "Media Library"; do

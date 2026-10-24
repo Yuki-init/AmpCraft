@@ -1,5 +1,5 @@
 [package]
-name = "amp-audio-out"
+name = "ampcraft-audio-out"
 description = "Audio output: device stream, lock-free ring buffer, volume and balance."
 version.workspace = true
 edition.workspace = true

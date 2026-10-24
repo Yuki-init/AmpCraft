@@ -67,7 +67,7 @@ pub struct FfmpegTags;
 
 impl TagReader for FfmpegTags {
     fn read(&self, path: &Path) -> std::result::Result<FileTags, String> {
-        let dec = amp_core::Decoder::open(path, 44_100).map_err(|e| e.to_string())?;
+        let dec = ampcraft_core::Decoder::open(path, 44_100).map_err(|e| e.to_string())?;
         let i = dec.info();
         Ok(FileTags {
             title: i.title.clone(),

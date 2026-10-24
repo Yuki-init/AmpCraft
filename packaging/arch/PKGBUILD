@@ -1,15 +1,15 @@
-# PKGBUILD for building OpenAMP from this repository checkout.
+# PKGBUILD for building AmpCraft from this repository checkout.
 # From packaging/arch: `makepkg -si` (needs network for cargo fetch), or let
 # scripts/build-arch-package.sh build it in a container and install the result with
-# `sudo pacman -U dist/openamp-*.pkg.tar.zst`.
+# `sudo pacman -U dist/ampcraft-*.pkg.tar.zst`.
 
-pkgname=openamp
+pkgname=ampcraft
 pkgver=0.1.0
 pkgrel=2
 pkgdesc="Classic skinnable audio player (working name)"
 arch=(x86_64)
-url="https://github.com/Yuki-init/OpenAMP"
-license=('GPL-3.0-or-later')
+url="https://github.com/Yuki-init/AmpCraft"
+license=('MIT OR Apache-2.0')
 depends=(ffmpeg alsa-lib gcc-libs glibc)
 makedepends=(rustup clang pkgconf)
 optdepends=(
@@ -32,16 +32,17 @@ prepare() {
 build() {
   cd "$_root"
   export CARGO_TARGET_DIR="$srcdir/target"
-  cargo build --release --locked --offline -p amp-app --bin openamp --bin openamp-cli
+  cargo build --release --locked --offline -p ampcraft --bin ampcraft
 }
 
 package() {
   cd "$_root"
-  install -Dm755 "$srcdir/target/release/openamp" "$pkgdir/usr/bin/openamp"
-  install -Dm755 "$srcdir/target/release/openamp-cli" "$pkgdir/usr/bin/openamp-cli"
-  install -Dm644 packaging/openamp.desktop "$pkgdir/usr/share/applications/openamp.desktop"
-  install -Dm644 packaging/openamp.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/openamp.svg"
-  install -Dm644 README.md "$pkgdir/usr/share/doc/openamp/README.md"
-  install -Dm644 assets/LICENSES.md "$pkgdir/usr/share/doc/openamp/LICENSES.md"
-  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/openamp/LICENSE"
+  install -Dm755 "$srcdir/target/release/ampcraft" "$pkgdir/usr/bin/ampcraft"
+  install -Dm644 packaging/ampcraft.desktop "$pkgdir/usr/share/applications/ampcraft.desktop"
+  install -Dm644 packaging/ampcraft.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/ampcraft.svg"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/ampcraft/README.md"
+  install -Dm644 ATTRIBUTION.md "$pkgdir/usr/share/doc/ampcraft/ATTRIBUTION.md"
+  install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/ampcraft/LICENSE-MIT"
+  install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/ampcraft/LICENSE-APACHE"
+  install -Dm644 NOTICE "$pkgdir/usr/share/licenses/ampcraft/NOTICE"
 }

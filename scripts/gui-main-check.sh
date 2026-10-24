@@ -5,7 +5,7 @@
 # Run inside the container: scripts/dev.sh scripts/gui-main-check.sh
 set -u
 SKIN=${SKIN:-skins/base-2.91.wsz}
-cargo build -q --bin openamp || exit 1
+cargo build -q --bin ampcraft || exit 1
 G=.cache/gui
 mkdir -p "$G"
 ffmpeg -v error -y -f lavfi -i "sine=f=440:d=40" -ac 2 -metadata title="ハレ晴レユカイ" \
@@ -20,7 +20,7 @@ export DISPLAY=:78
 sleep 1
 openbox >/dev/null 2>&1 &
 sleep 1
-target/debug/openamp --audio null --skin "$SKIN" "$G/01.flac" "$G/02.mp3" >.cache/main.log 2>&1 &
+target/debug/ampcraft --audio null --skin "$SKIN" "$G/01.flac" "$G/02.mp3" >.cache/main.log 2>&1 &
 APID=$!
 sleep 2.5
 

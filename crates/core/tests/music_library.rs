@@ -1,21 +1,26 @@
 //! Opt-in checks against the owner's music library.
 //!
-//! Runs only when `WINAMP_RS_MUSIC_DIR` points at an existing directory, otherwise it passes
+//! Runs only when `AMPCRAFT_TEST_MUSIC_DIR` points at an existing directory, otherwise it passes
 //! without doing anything. The library is read-only and private: this test never writes to
 //! it and prints aggregate numbers only, never file names or paths.
 //!
-//! Tunables: `WINAMP_RS_MUSIC_SAMPLE` (files to test, default 60) and
-//! `WINAMP_RS_MUSIC_SCAN_LIMIT` (directory entries to visit, default 50000).
+//! Tunables: `AMPCRAFT_TEST_MUSIC_SAMPLE` (files to test, default 60) and
+//! `AMPCRAFT_TEST_MUSIC_SCAN_LIMIT` (directory entries to visit, default 50000).
 
 // Integration tests are test code; panicking on setup failure is the point.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use amp_core::{CoreError, Decoder};
+use ampcraft_core::{CoreError, Decoder};
 
 const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "ogg", "oga", "opus", "m4a", "mp4", "aac", "wma", "wav", "aif", "aiff", "ape",
@@ -146,16 +151,16 @@ fn check_file(path: &Path, stats: &mut Stats) -> Result<(), String> {
 
 #[test]
 fn sample_of_library_decodes_and_seeks() {
-    let Some(root) = std::env::var_os("WINAMP_RS_MUSIC_DIR").map(PathBuf::from) else {
-        eprintln!("WINAMP_RS_MUSIC_DIR not set, skipping");
+    let Some(root) = std::env::var_os("AMPCRAFT_TEST_MUSIC_DIR").map(PathBuf::from) else {
+        eprintln!("AMPCRAFT_TEST_MUSIC_DIR not set, skipping");
         return;
     };
     if !root.is_dir() {
         eprintln!("music dir not mounted, skipping");
         return;
     }
-    let sample = env_usize("WINAMP_RS_MUSIC_SAMPLE", 60);
-    let scan_limit = env_usize("WINAMP_RS_MUSIC_SCAN_LIMIT", 50_000);
+    let sample = env_usize("AMPCRAFT_TEST_MUSIC_SAMPLE", 60);
+    let scan_limit = env_usize("AMPCRAFT_TEST_MUSIC_SCAN_LIMIT", 50_000);
 
     let started = Instant::now();
     let (all, visited) = collect_audio(&root, scan_limit);

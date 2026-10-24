@@ -1,5 +1,5 @@
 [package]
-name = "amp-library"
+name = "ampcraft-library"
 description = "Media library: database, tag reading, .m3u and .pls playlists."
 version.workspace = true
 edition.workspace = true
@@ -12,7 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-amp-core = { version = "0.1.0", path = "../core" }
+ampcraft-core.workspace = true
 log = "0.4.34"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 thiserror = "2.0.21"

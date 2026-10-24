@@ -1,14 +1,19 @@
 //! Engine behavior on generated WAV fixtures: exact decode, resampling, seek, gapless, transport.
 
 // Integration tests are test code; panicking on setup failure is the point.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 mod common;
 
 use std::time::Duration;
 
-use amp_core::wav::WavFormat;
-use amp_core::{Decoder, PlaybackState, Player, PlayerConfig, Repeat};
+use ampcraft_core::wav::WavFormat;
+use ampcraft_core::{Decoder, PlaybackState, Player, PlayerConfig, Repeat};
 use common::*;
 
 const RATE: u32 = 44_100;

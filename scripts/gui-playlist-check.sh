@@ -5,7 +5,7 @@
 # Run inside the container: scripts/dev.sh scripts/gui-playlist-check.sh
 set -u
 SKIN=${SKIN:-skins/base-2.91.wsz}
-cargo build -q --bin openamp || exit 1
+cargo build -q --bin ampcraft || exit 1
 G=.cache/gui-pl
 mkdir -p "$G"
 mk() { ffmpeg -v error -y -f lavfi -i "sine=f=$1:d=$2" -ac 2 "${@:4}" "$G/$3"; }
@@ -20,7 +20,7 @@ export DISPLAY=:79
 sleep 1
 openbox >/dev/null 2>&1 &
 sleep 1
-target/debug/openamp --audio null --skin "$SKIN" "$G" >.cache/pl.log 2>&1 &
+target/debug/ampcraft --audio null --skin "$SKIN" "$G" >.cache/pl.log 2>&1 &
 APID=$!
 sleep 3
 
@@ -52,8 +52,8 @@ click 353 164 0.5             # show again
 xdotool mousemove 150 105 mousedown 1; sleep 0.1
 xdotool mousemove 300 150; sleep 0.1; xdotool mousemove 450 205; sleep 0.2; xdotool mouseup 1; sleep 0.5
 shot 7-group-moved 640x660 340 180
-for n in OpenAMP Equalizer Playlist; do xwininfo -name "$n" | awk -v n="$n" '/Absolute upper-left X/{x=$4} /Absolute upper-left Y/{y=$4} /Width/{w=$2} /Height/{h=$2} END{printf "  %-10s %d,%d %dx%d\n", n, x, y, w, h}'; done
-read MX MY < <(xwininfo -name OpenAMP | awk '/Absolute upper-left X/{x=$4} /Absolute upper-left Y/{y=$4} END{print x, y}')
+for n in AmpCraft Equalizer Playlist; do xwininfo -name "$n" | awk -v n="$n" '/Absolute upper-left X/{x=$4} /Absolute upper-left Y/{y=$4} /Width/{w=$2} /Height/{h=$2} END{printf "  %-10s %d,%d %dx%d\n", n, x, y, w, h}'; done
+read MX MY < <(xwininfo -name AmpCraft | awk '/Absolute upper-left X/{x=$4} /Absolute upper-left Y/{y=$4} END{print x, y}')
 click $((MX + 268)) $((MY + 7)) 0.8    # close
 kill -0 $APID 2>/dev/null && { echo "player still running (BAD)"; kill $APID; } || echo "player exited on close"
 cat .cache/pl.log

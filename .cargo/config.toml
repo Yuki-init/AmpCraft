@@ -9,3 +9,7 @@ BINDGEN_EXTRA_CLANG_ARGS_x86_64_pc_windows_gnu = "-D__AMXINTRIN_H -D__AMX_COMPLE
 # sets up the prefix and a virtual display.
 [target.x86_64-pc-windows-gnu]
 runner = "wine"
+
+[alias]
+# `cargo xtask ci` is the quality gate (run it through scripts/dev.sh; see AGENTS.md).
+xtask = "run --quiet --package xtask --"

@@ -13,6 +13,6 @@ else
     echo "note: no Windows FFmpeg in .cache/ffmpeg-win64 (scripts/fetch-ffmpeg-windows.sh);" \
         "checking only the crates without FFmpeg" >&2
     scripts/dev.sh cargo clippy --quiet --all-targets --target "$target" \
-        -p amp-platform -p amp-dock -p amp-skin -p amp-ui -p amp-dsp -p amp-audio-out \
+        -p ampcraft-platform -p ampcraft-dock -p ampcraft-skin -p ampcraft-ui -p ampcraft-dsp -p ampcraft-audio-out \
         -- -D warnings
 fi
