@@ -66,6 +66,10 @@ loaded `.wsz` skin.
 
 ## Where it is heading
 
-The Crafting Apps are pure Rust, have no `unsafe`, draw their UI with egui, and expose every
-action as a command that a CLI, a control channel and MCP can drive. `docs/gaps.md` lists what
-AmpCraft still needs for each.
+The Crafting Apps have no `unsafe`, draw their UI with egui, and expose every action as a
+command that a CLI, a control channel and MCP can drive. `docs/gaps.md` lists what AmpCraft
+still needs for each.
+
+Decoding stays with FFmpeg by choice: it handles every codec and container people actually
+have, far beyond what a pure-Rust decoder set would cover. It is linked dynamically (LGPL
+builds), so AmpCraft's own code stays MIT OR Apache-2.0.

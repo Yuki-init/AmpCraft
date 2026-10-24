@@ -165,7 +165,7 @@ a sample of it, printing aggregate results only. Without it, those tests are ski
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for what is next, and [docs/gaps.md](docs/gaps.md) for the work
-still needed to meet the Crafting Apps standards (pure-Rust decoding, an egui UI, no `unsafe`).
+still needed to meet the Crafting Apps standards (an egui UI, no `unsafe`, a command layer).
 
 ## Contributing
 

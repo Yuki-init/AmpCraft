@@ -49,8 +49,8 @@ the notices licenses require. `cargo xtask assets` fails when a file under `asse
 - Webamp (MIT) may be read as a reference for skin format quirks, with attribution if anything
   is ported.
 - Never copy GPL, LGPL or MPL code. Permissive crates are fine as dependencies (`deny.toml`).
-  FFmpeg is the one exception, linked dynamically as an LGPL build, until pure-Rust decoding
-  replaces it (`docs/gaps.md`).
+  FFmpeg is the decoder on purpose: it plays every format people actually have. It is linked
+  dynamically, LGPL builds only (never `--enable-gpl` or `--enable-nonfree`).
 
 ## 3. Never crash
 

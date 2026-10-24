@@ -19,12 +19,11 @@ Status: 2026-10-24.
 
 ## Next
 
-1. Finish Windows: file dialogs, message boxes, media keys (`docs/gaps.md` G5).
-2. Pure-Rust decoding in place of FFmpeg (G1).
-3. Move window and UI code onto egui and winit, removing the X11 and Win32 backends and the
-   last `unsafe` (G2, G3).
-4. Commands for every action, a JSON control channel and an MCP server (G4).
-5. Propose AmpCraft to the Crafting Apps through an RFC in `storytold/craft-contrib`.
+1. Finish Windows: file dialogs, message boxes, media keys (`docs/gaps.md` G4).
+2. Move window and UI code onto egui and winit, removing the X11 and Win32 backends and the
+   last `unsafe` (G1, G2).
+3. Commands for every action, a JSON control channel and an MCP server (G3).
+4. Propose AmpCraft to the Crafting Apps through an RFC in `storytold/craft-contrib`.
 
 ## Progress log
 
@@ -34,3 +33,4 @@ Status: 2026-10-24.
   the headless CLI (`--rescan` replaces its library scan). New System theme, the default: KDE
   color schemes, portal light/dark and accent color, Windows light/dark and accent, followed
   live.
+- 2026-10-24: FFmpeg stays as the decoder by choice; removed from the gaps list.
