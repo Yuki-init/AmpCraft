@@ -73,7 +73,7 @@ People leave a music player running for hours; a crash loses their playlist and 
 |---|---|
 | L0 | `ampcraft-dock` (panel graph, snapping, group drag; pure), `ampcraft-dsp` (EQ, spectrum) |
 | L1 | `ampcraft-core` (playback engine), `ampcraft-skin` (`.wsz` loader, built-in themes), `ampcraft-audio-out` (cpal output) |
-| L2 | `ampcraft-library` (library database, playlists), `ampcraft-ui` (software renderer, widgets, window state) |
+| L2 | `ampcraft-library` (library file, playlists), `ampcraft-ui` (software renderer, widgets, window state) |
 | L3 | `ampcraft-platform` (window backends: X11, Win32) |
 | apps | `ampcraft` (the desktop player) |
 

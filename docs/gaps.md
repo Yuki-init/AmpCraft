@@ -37,12 +37,7 @@ Plan: an `ampcraft-engine` crate with the player session and commands (`playback
 
 File dialogs, message boxes and media keys are missing on Windows.
 
-## G5. Library database bundles SQLite (C)
-
-`ampcraft-library` uses `rusqlite` with the bundled SQLite. Pure-Rust storage would fit the
-standards; the schema is small.
-
-## G6. Suite infrastructure not yet adopted
+## G5. Suite infrastructure not yet adopted
 
 - CI on GitHub Actions (the Crafting Apps use `storytold/craft-common-actions`), SonarCloud and
   CodeRabbit.

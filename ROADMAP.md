@@ -34,3 +34,5 @@ Status: 2026-10-24.
   color schemes, portal light/dark and accent color, Windows light/dark and accent, followed
   live.
 - 2026-10-24: FFmpeg stays as the decoder by choice; removed from the gaps list.
+- 2026-10-24: The library is a JSON file (`library.json`) instead of SQLite: no C dependency,
+  atomic saves, plays saved at once, damaged files set aside.

@@ -1,17 +1,29 @@
-//! Media library: a SQLite database of the user's tracks, filled by a read-only scanner.
+//! Media library: the user's tracks, kept in memory and saved as one JSON file, filled by a
+//! read-only scanner.
 //!
 //! The scanner never writes to the music folders. It is incremental: files whose size and
 //! modification time are unchanged are skipped, changed ones are re-read, and entries for
 //! files that disappeared are removed. A folder that is missing entirely (an unmounted drive)
 //! is skipped and its tracks are kept.
+//!
+//! Scanning runs in two steps so it can happen on another thread while the player keeps using
+//! the library: [`Library::snapshot`] copies what the scanner needs, [`scan`] reads the
+//! folders and returns the changes, and [`Library::apply`] merges them. Play counts recorded
+//! meanwhile are kept.
+//!
+//! Saving writes a temporary file next to the library and renames it over the old one, so a
+//! crash mid-save leaves the previous file intact. A file that cannot be read is moved aside
+//! (`library.json.damaged`), never overwritten.
 
 pub mod playlist;
 
-use std::collections::HashSet;
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
-use rusqlite::{Connection, OptionalExtension, params};
+use serde::{Deserialize, Serialize};
 
 /// File extensions treated as audio (compared case-insensitively).
 pub const AUDIO_EXTENSIONS: &[&str] = &[
@@ -19,13 +31,13 @@ pub const AUDIO_EXTENSIONS: &[&str] = &[
     "wv", "mpc", "mp2", "ac3", "alac", "caf", "webm", "mka",
 ];
 
-/// Rows written per transaction during a scan.
-const BATCH: usize = 200;
+/// Version of the JSON file format.
+const FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LibraryError {
-    #[error("database error: {0}")]
-    Db(#[from] rusqlite::Error),
+    #[error("library file error: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -39,21 +51,53 @@ pub fn is_audio(path: &Path) -> bool {
 }
 
 /// What a tag reader extracts from one file.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct FileTags {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub artist: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub album: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub album_artist: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub genre: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub track: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub disc: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub year: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none", with = "millis")]
     pub duration: Option<Duration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub codec: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sample_rate: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub channels: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bit_rate: Option<u64>,
+}
+
+/// Durations are stored as whole milliseconds.
+mod millis {
+    use std::time::Duration;
+
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(d: &Option<Duration>, s: S) -> Result<S::Ok, S::Error> {
+        match d {
+            Some(d) => s.serialize_u64(u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Duration>, D::Error> {
+        Ok(Option::<u64>::deserialize(d)?.map(Duration::from_millis))
+    }
 }
 
 /// Reads tags from a file. The production reader uses FFmpeg; tests use a fake.
@@ -187,7 +231,7 @@ pub struct Filter {
     pub genre: Option<String>,
     /// Folder that directly holds the tracks (subfolders are not included).
     pub folder: Option<PathBuf>,
-    /// Text searched in title, artist, album and path.
+    /// Text searched in title, artist, album, album artist, genre and path.
     pub text: String,
 }
 
@@ -200,69 +244,136 @@ pub struct Stats {
     pub total_duration: Duration,
 }
 
-pub struct Library {
-    conn: Connection,
+/// One track as stored in the file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Entry {
+    id: i64,
+    path: String,
+    size: u64,
+    /// File modification time, Unix seconds.
+    mtime: i64,
+    #[serde(flatten)]
+    tags: FileTags,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    added_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    play_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_played: Option<i64>,
+    /// Lowercased (ASCII) search text, built on load and on change.
+    #[serde(skip)]
+    search: String,
 }
 
-impl std::fmt::Debug for Library {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Library")
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+impl Entry {
+    fn index(&mut self) {
+        let t = &self.tags;
+        let parts = [&t.title, &t.artist, &t.album, &t.album_artist, &t.genre];
+        let mut s = String::new();
+        for p in parts.into_iter().flatten() {
+            s.push_str(p);
+            s.push('\u{1}');
+        }
+        s.push_str(&self.path);
+        self.search = s.to_ascii_lowercase();
+    }
+
+    /// Album artist, or artist when there is none (the artist pane's grouping).
+    fn group_artist(&self) -> Option<&str> {
+        self.tags
+            .album_artist
+            .as_deref()
+            .or(self.tags.artist.as_deref())
+    }
+
+    fn folder(&self) -> Option<String> {
+        folder_of(Path::new(&self.path))
+    }
+
+    fn track(&self) -> Track {
+        Track {
+            id: self.id,
+            path: PathBuf::from(&self.path),
+            tags: self.tags.clone(),
+            size: self.size,
+            plays: PlayStats {
+                added_at: self.added_at,
+                play_count: self.play_count,
+                last_played: self.last_played,
+            },
+        }
+    }
+
+    fn matches(&self, f: &Filter, needle: &str) -> bool {
+        (needle.is_empty() || self.search.contains(needle))
+            && f.artist.as_ref().is_none_or(|a| {
+                self.group_artist() == Some(a.as_str()) || self.tags.artist.as_ref() == Some(a)
+            })
+            && f.album
+                .as_ref()
+                .is_none_or(|a| self.tags.album.as_ref() == Some(a))
+            && f.genre
+                .as_ref()
+                .is_none_or(|g| self.tags.genre.as_ref() == Some(g))
+            && f.folder
+                .as_deref()
+                .is_none_or(|d| self.folder().as_deref() == Some(folder_key(d).as_str()))
+            && match f.view {
+                View::MostPlayed => self.play_count > 0,
+                View::RecentlyPlayed => self.last_played.is_some(),
+                View::NeverPlayed => self.play_count == 0,
+                View::Audio | View::RecentlyAdded | View::Folders => true,
+            }
     }
 }
 
-const SCHEMA_VERSION: i64 = 3;
+/// The file's layout.
+#[derive(Debug, Serialize, Deserialize)]
+struct LibraryFile {
+    version: u32,
+    next_id: i64,
+    tracks: Vec<Entry>,
+}
 
-const TRACK_COLUMNS: &str = "id, path, title, artist, album, album_artist, genre, track, disc, \
-                             year, duration_ms, codec, sample_rate, channels, bit_rate, size, \
-                             added_at, play_count, last_played";
+/// What the scanner needs to know about the library: each known file's size and time.
+#[derive(Debug, Clone, Default)]
+pub struct Snapshot {
+    known: HashMap<String, (u64, i64)>,
+}
+
+/// The changes one scan found, for [`Library::apply`].
+#[derive(Debug, Clone, Default)]
+pub struct ScanChanges {
+    /// New or changed files: path, size, modification time and tags.
+    upserts: Vec<(String, u64, i64, FileTags)>,
+    /// Files under a scanned folder that are gone.
+    removed: Vec<String>,
+    pub report: ScanReport,
+}
+
+/// The media library.
+#[derive(Debug, Clone, Default)]
+pub struct Library {
+    /// Where it is saved; `None` for a library that lives only in memory.
+    file: Option<PathBuf>,
+    entries: Vec<Entry>,
+    /// Index into `entries` by path.
+    by_path: HashMap<String, usize>,
+    /// Ids in use.
+    ids: HashSet<i64>,
+    next_id: i64,
+    dirty: bool,
+}
 
 fn modified_secs(meta: &std::fs::Metadata) -> i64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_secs() as i64)
-}
-
-/// The WHERE clause every listing shares: ?1 search pattern, ?2 artist, ?3 album, ?4 genre,
-/// ?5 view, ?6 folder.
-const FILTER_WHERE: &str = "(title LIKE ?1 ESCAPE '\\' OR artist LIKE ?1 ESCAPE '\\'
-        OR album LIKE ?1 ESCAPE '\\' OR album_artist LIKE ?1 ESCAPE '\\'
-        OR genre LIKE ?1 ESCAPE '\\' OR path LIKE ?1 ESCAPE '\\')
-    AND (?2 IS NULL OR COALESCE(album_artist, artist) = ?2 OR artist = ?2)
-    AND (?3 IS NULL OR album = ?3)
-    AND (?4 IS NULL OR genre = ?4)
-    AND (?6 IS NULL OR folder = ?6)
-    AND CASE ?5 WHEN 1 THEN play_count > 0
-                WHEN 3 THEN last_played IS NOT NULL
-                WHEN 4 THEN play_count = 0
-                ELSE 1 END";
-
-/// Parameters for [`FILTER_WHERE`].
-type FilterParams = (
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    i64,
-    Option<String>,
-);
-
-fn filter_params(f: &Filter) -> FilterParams {
-    let view = match f.view {
-        View::Audio | View::Folders => 0,
-        View::MostPlayed => 1,
-        View::RecentlyAdded => 2,
-        View::RecentlyPlayed => 3,
-        View::NeverPlayed => 4,
-    };
-    (
-        format!("%{}%", like_escape(f.text.trim())),
-        f.artist.clone(),
-        f.album.clone(),
-        f.genre.clone(),
-        view,
-        f.folder.as_deref().map(folder_key),
-    )
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 /// How a folder is stored and compared: its path as text.
@@ -270,7 +381,7 @@ fn folder_key(folder: &Path) -> String {
     folder.to_string_lossy().into_owned()
 }
 
-/// The stored folder of a track file: its parent directory.
+/// The folder of a track file: its parent directory.
 fn folder_of(path: &Path) -> Option<String> {
     path.parent().map(folder_key)
 }
@@ -278,54 +389,24 @@ fn folder_of(path: &Path) -> Option<String> {
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
-fn row_to_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
-    let opt_u32 = |i: usize| -> rusqlite::Result<Option<u32>> {
-        Ok(row
-            .get::<_, Option<i64>>(i)?
-            .and_then(|v| u32::try_from(v).ok()))
-    };
-    Ok(Track {
-        id: row.get(0)?,
-        path: PathBuf::from(row.get::<_, String>(1)?),
-        tags: FileTags {
-            title: row.get(2)?,
-            artist: row.get(3)?,
-            album: row.get(4)?,
-            album_artist: row.get(5)?,
-            genre: row.get(6)?,
-            track: opt_u32(7)?,
-            disc: opt_u32(8)?,
-            year: opt_u32(9)?,
-            duration: row
-                .get::<_, Option<i64>>(10)?
-                .and_then(|ms| u64::try_from(ms).ok())
-                .map(Duration::from_millis),
-            codec: row.get(11)?,
-            sample_rate: opt_u32(12)?,
-            channels: row
-                .get::<_, Option<i64>>(13)?
-                .and_then(|v| u16::try_from(v).ok()),
-            bit_rate: row
-                .get::<_, Option<i64>>(14)?
-                .and_then(|v| u64::try_from(v).ok()),
-        },
-        size: u64::try_from(row.get::<_, i64>(15)?).unwrap_or(0),
-        plays: PlayStats {
-            added_at: row.get(16)?,
-            play_count: u32::try_from(row.get::<_, i64>(17)?).unwrap_or(0),
-            last_played: row.get(18)?,
-        },
-    })
+/// Case-insensitive (ASCII) order, then exact, so equal-looking names keep a fixed order.
+fn nocase(a: &str, b: &str) -> Ordering {
+    a.to_ascii_lowercase()
+        .cmp(&b.to_ascii_lowercase())
+        .then_with(|| a.cmp(b))
 }
 
-/// Escapes `%`, `_` and `\` for a LIKE pattern using `\` as the escape character.
-fn like_escape(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
+/// Album order: album artist (or artist), album, disc, track, path. Missing values first.
+fn album_order(a: &Entry, b: &Entry) -> Ordering {
+    a.group_artist()
+        .cmp(&b.group_artist())
+        .then_with(|| a.tags.album.cmp(&b.tags.album))
+        .then_with(|| a.tags.disc.cmp(&b.tags.disc))
+        .then_with(|| a.tags.track.cmp(&b.tags.track))
+        .then_with(|| a.path.cmp(&b.path))
 }
 
 /// `std::fs::canonicalize`, but without the `\\?\` prefix Windows adds to every result when
@@ -347,8 +428,8 @@ fn strip_verbatim(p: &str) -> Option<String> {
         return Some(format!(r"\\{unc}"));
     }
     let b = rest.as_bytes();
-    (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\')
-        .then(|| rest.to_owned())
+    let drive = matches!(b, [letter, b':', b'\\', ..] if letter.is_ascii_alphabetic());
+    drive.then(|| rest.to_owned())
 }
 
 /// Drops roots that are inside other roots, so nested folders are scanned once.
@@ -389,208 +470,236 @@ fn walk(root: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Scans `roots` (read-only) against what `snapshot` knows, reading tags of new and changed
+/// files. Touches nothing but the files' metadata and tags; [`Library::apply`] takes the
+/// result. `progress` gets the number of files handled so far and the total found.
+pub fn scan(
+    snapshot: &Snapshot,
+    roots: &[PathBuf],
+    reader: &dyn TagReader,
+    progress: &mut dyn FnMut(usize, usize),
+) -> ScanChanges {
+    let mut out = ScanChanges::default();
+    for root in distinct_roots(roots) {
+        if !root.is_dir() {
+            log::warn!(
+                "library folder not available, keeping its tracks: {}",
+                root.display()
+            );
+            out.report.roots_missing += 1;
+            continue;
+        }
+        out.report.roots_scanned += 1;
+        let mut files = Vec::new();
+        walk(&root, &mut files);
+        let mut seen: HashSet<&str> = HashSet::with_capacity(files.len());
+        for (i, path) in files.iter().enumerate() {
+            progress(i + 1, files.len());
+            let Some(key) = path.to_str() else {
+                out.report.unreadable += 1;
+                continue;
+            };
+            let Ok(meta) = std::fs::metadata(path) else {
+                continue;
+            };
+            out.report.files_seen += 1;
+            seen.insert(key);
+            let (size, mtime) = (meta.len(), modified_secs(&meta));
+            let known = snapshot.known.get(key);
+            if known == Some(&(size, mtime)) {
+                out.report.unchanged += 1;
+                continue;
+            }
+            let tags = reader.read(path).unwrap_or_else(|e| {
+                log::debug!("unreadable tags: {e}");
+                out.report.unreadable += 1;
+                FileTags::default()
+            });
+            out.upserts.push((key.to_owned(), size, mtime, tags));
+            if known.is_some() {
+                out.report.updated += 1;
+            } else {
+                out.report.added += 1;
+            }
+        }
+        // Entries under this root whose files are gone.
+        let mut gone: Vec<String> = snapshot
+            .known
+            .keys()
+            .filter(|k| Path::new(k).starts_with(&root) && !seen.contains(k.as_str()))
+            .cloned()
+            .collect();
+        gone.sort();
+        out.report.removed += gone.len();
+        out.removed.extend(gone);
+    }
+    out
+}
+
 impl Library {
-    /// Opens (creating if needed) the database at `path`.
+    /// Opens the library saved at `path`, or an empty one when there is no file yet. A file
+    /// that cannot be read is renamed to `<name>.damaged` and the library starts empty.
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let conn = Connection::open(path)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        Self::init(conn)
-    }
-
-    pub fn open_in_memory() -> Result<Self> {
-        Self::init(Connection::open_in_memory()?)
-    }
-
-    fn init(conn: Connection) -> Result<Self> {
-        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version < 1 {
-            conn.execute_batch(
-                "CREATE TABLE IF NOT EXISTS tracks (
-                    id INTEGER PRIMARY KEY,
-                    path TEXT NOT NULL UNIQUE,
-                    size INTEGER NOT NULL,
-                    mtime INTEGER NOT NULL,
-                    title TEXT, artist TEXT, album TEXT, album_artist TEXT, genre TEXT,
-                    track INTEGER, disc INTEGER, year INTEGER, duration_ms INTEGER,
-                    codec TEXT, sample_rate INTEGER, channels INTEGER, bit_rate INTEGER
-                );
-                CREATE INDEX IF NOT EXISTS tracks_artist ON tracks(artist);
-                CREATE INDEX IF NOT EXISTS tracks_album ON tracks(album);
-                PRAGMA user_version = 1;",
-            )?;
-        }
-        if version < 2 {
-            // Play statistics. Tracks from before this version count as added when their
-            // file was last modified.
-            conn.execute_batch(
-                "ALTER TABLE tracks ADD COLUMN added_at INTEGER;
-                 ALTER TABLE tracks ADD COLUMN play_count INTEGER NOT NULL DEFAULT 0;
-                 ALTER TABLE tracks ADD COLUMN last_played INTEGER;
-                 UPDATE tracks SET added_at = mtime;
-                 PRAGMA user_version = 2;",
-            )?;
-        }
-        if version < SCHEMA_VERSION {
-            // The folder holding each track, for the folder view.
-            conn.execute_batch(
-                "ALTER TABLE tracks ADD COLUMN folder TEXT;
-                 CREATE INDEX IF NOT EXISTS tracks_folder ON tracks(folder);",
-            )?;
-            let rows: Vec<(i64, String)> = {
-                let mut stmt = conn.prepare("SELECT id, path FROM tracks")?;
-                let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
-                rows.collect::<rusqlite::Result<_>>()?
-            };
-            let tx = conn.unchecked_transaction()?;
-            for (id, path) in rows {
-                tx.execute(
-                    "UPDATE tracks SET folder = ?2 WHERE id = ?1",
-                    params![id, folder_of(Path::new(&path))],
-                )?;
+        let mut lib = Library {
+            file: Some(path.to_path_buf()),
+            next_id: 1,
+            ..Library::default()
+        };
+        let text = match std::fs::read(path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(lib),
+            Err(e) => return Err(e.into()),
+        };
+        match serde_json::from_slice::<LibraryFile>(&text) {
+            Ok(f) if f.version <= FORMAT_VERSION => {
+                lib.next_id = f.next_id.max(1);
+                for e in f.tracks {
+                    lib.insert(e);
+                }
             }
-            tx.execute_batch("PRAGMA user_version = 3;")?;
-            tx.commit()?;
+            parsed => {
+                let damaged = path.with_extension("json.damaged");
+                match parsed {
+                    Ok(f) => log::warn!(
+                        "library file is from a newer version ({}); setting it aside",
+                        f.version
+                    ),
+                    Err(e) => log::warn!("library file unreadable ({e}); setting it aside"),
+                }
+                std::fs::rename(path, &damaged)?;
+            }
         }
-        Ok(Self { conn })
+        Ok(lib)
     }
 
-    /// Scans `roots` (read-only), updating the database. `progress` gets the number of files
-    /// handled so far and the total found.
+    /// A library that is never saved (tests).
+    pub fn open_in_memory() -> Result<Self> {
+        Ok(Library {
+            next_id: 1,
+            ..Library::default()
+        })
+    }
+
+    /// Adds an entry, keeping ids unique and the path index current.
+    fn insert(&mut self, mut e: Entry) {
+        if self.by_path.contains_key(&e.path) {
+            // A duplicate path in a hand-edited file: the first one wins.
+            log::debug!("duplicate library entry {}", e.path);
+            return;
+        }
+        if e.id <= 0 || self.ids.contains(&e.id) {
+            e.id = self.next_id;
+        }
+        self.next_id = self.next_id.max(e.id.saturating_add(1));
+        self.ids.insert(e.id);
+        e.index();
+        self.by_path.insert(e.path.clone(), self.entries.len());
+        self.entries.push(e);
+    }
+
+    fn reindex(&mut self) {
+        self.by_path = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.path.clone(), i))
+            .collect();
+        self.ids = self.entries.iter().map(|e| e.id).collect();
+    }
+
+    /// Whether there are changes not yet saved.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Writes the library to its file (atomically: a temporary file, then a rename).
+    pub fn save(&mut self) -> Result<()> {
+        let Some(path) = self.file.clone() else {
+            self.dirty = false;
+            return Ok(());
+        };
+        let file = LibraryFile {
+            version: FORMAT_VERSION,
+            next_id: self.next_id,
+            tracks: self.entries.clone(),
+        };
+        let tmp = path.with_extension("json.tmp");
+        {
+            let mut w = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
+            serde_json::to_writer(&mut w, &file)?;
+            w.flush()?;
+            w.get_ref().sync_all()?;
+        }
+        std::fs::rename(&tmp, &path)?;
+        self.dirty = false;
+        Ok(())
+    }
+
+    /// Saves when there are unsaved changes.
+    pub fn save_if_dirty(&mut self) -> Result<()> {
+        if self.dirty { self.save() } else { Ok(()) }
+    }
+
+    /// What a scan needs to know, cheap enough to hand to another thread.
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            known: self
+                .entries
+                .iter()
+                .map(|e| (e.path.clone(), (e.size, e.mtime)))
+                .collect(),
+        }
+    }
+
+    /// Merges a scan's changes. Play statistics of existing tracks are kept.
+    pub fn apply(&mut self, changes: ScanChanges) -> ScanReport {
+        let now = now_secs();
+        for (path, size, mtime, tags) in changes.upserts {
+            if let Some(&i) = self.by_path.get(&path)
+                && let Some(e) = self.entries.get_mut(i)
+            {
+                e.size = size;
+                e.mtime = mtime;
+                e.tags = tags;
+                e.index();
+            } else {
+                self.insert(Entry {
+                    id: self.next_id,
+                    path,
+                    size,
+                    mtime,
+                    tags,
+                    added_at: Some(now),
+                    play_count: 0,
+                    last_played: None,
+                    search: String::new(),
+                });
+            }
+            self.dirty = true;
+        }
+        if !changes.removed.is_empty() {
+            let gone: HashSet<String> = changes.removed.into_iter().collect();
+            self.entries.retain(|e| !gone.contains(&e.path));
+            self.reindex();
+            self.dirty = true;
+        }
+        changes.report
+    }
+
+    /// Scans `roots` (read-only) on this thread, merges the result and saves.
     pub fn scan(
         &mut self,
         roots: &[PathBuf],
         reader: &dyn TagReader,
         progress: &mut dyn FnMut(usize, usize),
     ) -> Result<ScanReport> {
-        let mut report = ScanReport::default();
-        for root in distinct_roots(roots) {
-            if !root.is_dir() {
-                log::warn!(
-                    "library folder not available, keeping its tracks: {}",
-                    root.display()
-                );
-                report.roots_missing += 1;
-                continue;
-            }
-            report.roots_scanned += 1;
-            let mut files = Vec::new();
-            walk(&root, &mut files);
-            self.scan_files(&root, &files, reader, &mut report, progress)?;
-        }
+        let changes = scan(&self.snapshot(), roots, reader, progress);
+        let report = self.apply(changes);
+        self.save_if_dirty()?;
         Ok(report)
-    }
-
-    fn scan_files(
-        &mut self,
-        root: &Path,
-        files: &[PathBuf],
-        reader: &dyn TagReader,
-        report: &mut ScanReport,
-        progress: &mut dyn FnMut(usize, usize),
-    ) -> Result<()> {
-        let mut seen: HashSet<String> = HashSet::with_capacity(files.len());
-        for (batch_index, batch) in files.chunks(BATCH).enumerate() {
-            let tx = self.conn.transaction()?;
-            for (i, path) in batch.iter().enumerate() {
-                progress(batch_index * BATCH + i + 1, files.len());
-                let Some(key) = path.to_str().map(str::to_owned) else {
-                    report.unreadable += 1;
-                    continue;
-                };
-                let Ok(meta) = std::fs::metadata(path) else {
-                    continue;
-                };
-                report.files_seen += 1;
-                seen.insert(key.clone());
-                let (size, mtime) = (meta.len() as i64, modified_secs(&meta));
-                let known: Option<(i64, i64)> = tx
-                    .query_row(
-                        "SELECT size, mtime FROM tracks WHERE path = ?1",
-                        [&key],
-                        |r| Ok((r.get(0)?, r.get(1)?)),
-                    )
-                    .optional()?;
-                if known == Some((size, mtime)) {
-                    report.unchanged += 1;
-                    continue;
-                }
-                let tags = match reader.read(path) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        log::debug!("unreadable tags: {e}");
-                        report.unreadable += 1;
-                        FileTags::default()
-                    }
-                };
-                tx.execute(
-                    "INSERT INTO tracks (path, size, mtime, title, artist, album, album_artist,
-                        genre, track, disc, year, duration_ms, codec, sample_rate, channels,
-                        bit_rate, added_at, folder)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                        ?17, ?18)
-                     ON CONFLICT(path) DO UPDATE SET size = ?2, mtime = ?3, title = ?4,
-                        artist = ?5, album = ?6, album_artist = ?7, genre = ?8, track = ?9,
-                        disc = ?10, year = ?11, duration_ms = ?12, codec = ?13,
-                        sample_rate = ?14, channels = ?15, bit_rate = ?16, folder = ?18",
-                    params![
-                        key,
-                        size,
-                        mtime,
-                        tags.title,
-                        tags.artist,
-                        tags.album,
-                        tags.album_artist,
-                        tags.genre,
-                        tags.track,
-                        tags.disc,
-                        tags.year,
-                        tags.duration.map(|d| d.as_millis() as i64),
-                        tags.codec,
-                        tags.sample_rate,
-                        tags.channels,
-                        tags.bit_rate.map(|b| b as i64),
-                        now_secs(),
-                        folder_of(path),
-                    ],
-                )?;
-                if known.is_some() {
-                    report.updated += 1;
-                } else {
-                    report.added += 1;
-                }
-            }
-            tx.commit()?;
-        }
-
-        // Remove entries under this root whose files are gone.
-        let prefix = format!("{}{}", root.to_string_lossy().trim_end_matches('/'), '/');
-        let pattern = format!("{}%", like_escape(&prefix));
-        let stale: Vec<i64> = {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT id, path FROM tracks WHERE path LIKE ?1 ESCAPE '\\'")?;
-            let rows = stmt.query_map([&pattern], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
-            })?;
-            let mut stale = Vec::new();
-            for row in rows {
-                let (id, path) = row?;
-                if !seen.contains(&path) {
-                    stale.push(id);
-                }
-            }
-            stale
-        };
-        let tx = self.conn.transaction()?;
-        for id in &stale {
-            tx.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
-        }
-        tx.commit()?;
-        report.removed += stale.len();
-        Ok(())
     }
 
     /// Tracks whose title, artist, album or path contains `text` (case-insensitive for ASCII),
@@ -605,30 +714,40 @@ impl Library {
         )
     }
 
+    fn matching<'a>(&'a self, f: &'a Filter) -> impl Iterator<Item = &'a Entry> + 'a {
+        let needle = f.text.trim().to_ascii_lowercase();
+        self.entries.iter().filter(move |e| e.matches(f, &needle))
+    }
+
     /// Tracks matching every set part of `filter`, in the view's order (album order for
     /// the plain audio view).
     pub fn tracks(&self, filter: &Filter, limit: usize) -> Result<Vec<Track>> {
-        let order = match filter.view {
-            View::Audio | View::NeverPlayed => {
-                "COALESCE(album_artist, artist), album, disc, track, path"
-            }
-            View::MostPlayed => "play_count DESC, last_played DESC, path",
+        let mut found: Vec<&Entry> = self.matching(filter).collect();
+        match filter.view {
+            View::Audio | View::NeverPlayed => found.sort_by(|a, b| album_order(a, b)),
+            View::MostPlayed => found.sort_by(|a, b| {
+                b.play_count
+                    .cmp(&a.play_count)
+                    .then_with(|| b.last_played.cmp(&a.last_played))
+                    .then_with(|| a.path.cmp(&b.path))
+            }),
             View::RecentlyAdded => {
-                "added_at DESC, COALESCE(album_artist, artist), album, disc, track, path"
+                found.sort_by(|a, b| b.added_at.cmp(&a.added_at).then_with(|| album_order(a, b)));
             }
-            View::RecentlyPlayed => "last_played DESC, path",
-            View::Folders => "folder COLLATE NOCASE, path COLLATE NOCASE",
-        };
-        let sql = format!(
-            "SELECT {TRACK_COLUMNS} FROM tracks WHERE {FILTER_WHERE} ORDER BY {order} LIMIT ?7"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let p = filter_params(filter);
-        let rows = stmt.query_map(
-            params![p.0, p.1, p.2, p.3, p.4, p.5, limit as i64],
-            row_to_track,
-        )?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+            View::RecentlyPlayed => found.sort_by(|a, b| {
+                b.last_played
+                    .cmp(&a.last_played)
+                    .then_with(|| a.path.cmp(&b.path))
+            }),
+            View::Folders => found.sort_by(|a, b| {
+                nocase(
+                    &a.folder().unwrap_or_default(),
+                    &b.folder().unwrap_or_default(),
+                )
+                .then_with(|| nocase(&a.path, &b.path))
+            }),
+        }
+        Ok(found.into_iter().take(limit).map(Entry::track).collect())
     }
 
     /// Artists among the tracks the filter's view and text select (its artist and album are
@@ -639,21 +758,27 @@ impl Library {
             album: None,
             ..filter.clone()
         };
-        let sql = format!(
-            "SELECT COALESCE(album_artist, artist) AS v, COUNT(DISTINCT album), COUNT(*)
-             FROM tracks WHERE {FILTER_WHERE} AND v IS NOT NULL AND v != ''
-             GROUP BY v ORDER BY v COLLATE NOCASE"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let p = filter_params(&f);
-        let rows = stmt.query_map(params![p.0, p.1, p.2, p.3, p.4, p.5], |r| {
-            Ok(ArtistSummary {
-                name: r.get(0)?,
-                albums: r.get::<_, i64>(1)? as u64,
-                tracks: r.get::<_, i64>(2)? as u64,
+        let mut groups: BTreeMap<&str, (BTreeSet<&str>, u64)> = BTreeMap::new();
+        for e in self.matching(&f) {
+            let Some(name) = e.group_artist().filter(|n| !n.is_empty()) else {
+                continue;
+            };
+            let g = groups.entry(name).or_default();
+            if let Some(album) = e.tags.album.as_deref() {
+                g.0.insert(album);
+            }
+            g.1 += 1;
+        }
+        let mut out: Vec<ArtistSummary> = groups
+            .into_iter()
+            .map(|(name, (albums, tracks))| ArtistSummary {
+                name: name.to_owned(),
+                albums: albums.len() as u64,
+                tracks,
             })
-        })?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+            .collect();
+        out.sort_by(|a, b| nocase(&a.name, &b.name));
+        Ok(out)
     }
 
     /// Albums among the tracks the filter's view, text and artist select (its album is
@@ -663,23 +788,25 @@ impl Library {
             album: None,
             ..filter.clone()
         };
-        let sql = format!(
-            "SELECT album AS v, MAX(year), COUNT(*)
-             FROM tracks WHERE {FILTER_WHERE} AND v IS NOT NULL AND v != ''
-             GROUP BY v ORDER BY v COLLATE NOCASE"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let p = filter_params(&f);
-        let rows = stmt.query_map(params![p.0, p.1, p.2, p.3, p.4, p.5], |r| {
-            Ok(AlbumSummary {
-                name: r.get(0)?,
-                year: r
-                    .get::<_, Option<i64>>(1)?
-                    .and_then(|y| u32::try_from(y).ok()),
-                tracks: r.get::<_, i64>(2)? as u64,
+        let mut groups: BTreeMap<&str, (Option<u32>, u64)> = BTreeMap::new();
+        for e in self.matching(&f) {
+            let Some(name) = e.tags.album.as_deref().filter(|n| !n.is_empty()) else {
+                continue;
+            };
+            let g = groups.entry(name).or_default();
+            g.0 = g.0.max(e.tags.year);
+            g.1 += 1;
+        }
+        let mut out: Vec<AlbumSummary> = groups
+            .into_iter()
+            .map(|(name, (year, tracks))| AlbumSummary {
+                name: name.to_owned(),
+                year,
+                tracks,
             })
-        })?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+            .collect();
+        out.sort_by(|a, b| nocase(&a.name, &b.name));
+        Ok(out)
     }
 
     /// Folders that directly hold tracks the filter's view, text, artist and album select
@@ -689,84 +816,97 @@ impl Library {
             folder: None,
             ..filter.clone()
         };
-        let sql = format!(
-            "SELECT folder AS v, COUNT(*) FROM tracks WHERE {FILTER_WHERE} AND v IS NOT NULL
-             GROUP BY v ORDER BY v COLLATE NOCASE"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let p = filter_params(&f);
-        let rows = stmt.query_map(params![p.0, p.1, p.2, p.3, p.4, p.5], |r| {
-            Ok(FolderSummary {
-                path: PathBuf::from(r.get::<_, String>(0)?),
-                tracks: r.get::<_, i64>(1)? as u64,
+        let mut groups: BTreeMap<String, u64> = BTreeMap::new();
+        for e in self.matching(&f) {
+            if let Some(folder) = e.folder() {
+                *groups.entry(folder).or_default() += 1;
+            }
+        }
+        let mut out: Vec<(String, u64)> = groups.into_iter().collect();
+        out.sort_by(|a, b| nocase(&a.0, &b.0));
+        Ok(out
+            .into_iter()
+            .map(|(path, tracks)| FolderSummary {
+                path: PathBuf::from(path),
+                tracks,
             })
-        })?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+            .collect())
     }
 
     /// Forgets every track under `folder` (a folder taken out of the library). Returns how
     /// many were removed. Files are not touched.
     pub fn remove_folder(&mut self, folder: &Path) -> Result<usize> {
-        let prefix = format!("{}/", folder.to_string_lossy().trim_end_matches('/'));
-        let pattern = format!("{}%", like_escape(&prefix));
-        Ok(self.conn.execute(
-            "DELETE FROM tracks WHERE path LIKE ?1 ESCAPE '\\'",
-            [&pattern],
-        )?)
+        let before = self.entries.len();
+        self.entries
+            .retain(|e| !Path::new(&e.path).starts_with(folder));
+        let removed = before - self.entries.len();
+        if removed > 0 {
+            self.reindex();
+            self.dirty = true;
+            self.save()?;
+        }
+        Ok(removed)
     }
 
     /// Counts a play of the file at `path` at `at` (Unix seconds). Returns false when the
-    /// file is not in the library.
-    pub fn record_play(&self, path: &Path, at: i64) -> Result<bool> {
-        let Some(key) = path.to_str() else {
+    /// file is not in the library. Not saved by itself; call [`Library::save`].
+    pub fn record_play(&mut self, path: &Path, at: i64) -> Result<bool> {
+        let Some(e) = path
+            .to_str()
+            .and_then(|k| self.by_path.get(k).copied())
+            .and_then(|i| self.entries.get_mut(i))
+        else {
             return Ok(false);
         };
-        let n = self.conn.execute(
-            "UPDATE tracks SET play_count = play_count + 1, last_played = ?2 WHERE path = ?1",
-            params![key, at],
-        )?;
-        Ok(n > 0)
+        e.play_count = e.play_count.saturating_add(1);
+        e.last_played = Some(at);
+        self.dirty = true;
+        Ok(true)
     }
 
-    /// Distinct values of a grouping with their track counts, sorted by name. Untagged tracks
-    /// are not listed.
-    fn grouped(&self, expr: &str) -> Result<Vec<(String, u64)>> {
-        let sql = format!(
-            "SELECT {expr} AS v, COUNT(*) FROM tracks WHERE v IS NOT NULL AND v != ''
-             GROUP BY v ORDER BY v COLLATE NOCASE"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64))
-        })?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    /// Distinct non-empty values of a grouping with their track counts, sorted by name.
+    fn grouped<'a>(&'a self, value: impl Fn(&'a Entry) -> Option<&'a str>) -> Vec<(String, u64)> {
+        let mut groups: BTreeMap<&str, u64> = BTreeMap::new();
+        for e in &self.entries {
+            if let Some(v) = value(e).filter(|v| !v.is_empty()) {
+                *groups.entry(v).or_default() += 1;
+            }
+        }
+        let mut out: Vec<(String, u64)> =
+            groups.into_iter().map(|(k, n)| (k.to_owned(), n)).collect();
+        out.sort_by(|a, b| nocase(&a.0, &b.0));
+        out
     }
 
     /// Album artists (or artists for tracks without one) and their track counts.
     pub fn artists(&self) -> Result<Vec<(String, u64)>> {
-        self.grouped("COALESCE(album_artist, artist)")
+        Ok(self.grouped(Entry::group_artist))
     }
 
     pub fn albums(&self) -> Result<Vec<(String, u64)>> {
-        self.grouped("album")
+        Ok(self.grouped(|e| e.tags.album.as_deref()))
     }
 
     pub fn genres(&self) -> Result<Vec<(String, u64)>> {
-        self.grouped("genre")
+        Ok(self.grouped(|e| e.tags.genre.as_deref()))
     }
 
     pub fn stats(&self) -> Result<Stats> {
-        let (tracks, artists, albums, ms): (i64, i64, i64, Option<i64>) = self.conn.query_row(
-            "SELECT COUNT(*), COUNT(DISTINCT COALESCE(album_artist, artist)),
-                    COUNT(DISTINCT album), SUM(duration_ms) FROM tracks",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )?;
+        let artists: HashSet<&str> = self
+            .entries
+            .iter()
+            .filter_map(Entry::group_artist)
+            .collect();
+        let albums: HashSet<&str> = self
+            .entries
+            .iter()
+            .filter_map(|e| e.tags.album.as_deref())
+            .collect();
         Ok(Stats {
-            tracks: tracks as u64,
-            artists: artists as u64,
-            albums: albums as u64,
-            total_duration: Duration::from_millis(ms.unwrap_or(0).max(0) as u64),
+            tracks: self.entries.len() as u64,
+            artists: artists.len() as u64,
+            albums: albums.len() as u64,
+            total_duration: self.entries.iter().filter_map(|e| e.tags.duration).sum(),
         })
     }
 }
@@ -849,7 +989,7 @@ mod tests {
         write(d, "Album A/cover.jpg", b"c");
         write(d, "Album B/.hidden.mp3", b"d");
         write(d, "Album B/03 three.ogg", b"e");
-        let mut lib = Library::open(&d.join("db/library.sqlite3")).unwrap();
+        let mut lib = Library::open(&d.join("db/library.json")).unwrap();
         let tags = FakeTags::new();
         let roots = vec![d.to_path_buf()];
 
@@ -1025,12 +1165,13 @@ mod tests {
         write(d, "A/03 three.flac", b"3");
         let mut lib = Library::open_in_memory().unwrap();
         scan(&mut lib, &[d.to_path_buf()], &FakeTags::new());
-        let one = d.join("A/01 one.flac");
-        let three = d.join("A/03 three.flac");
+        let one = canonicalize(d).unwrap().join("A/01 one.flac");
+        let three = canonicalize(d).unwrap().join("A/03 three.flac");
         assert!(lib.record_play(&three, 100).unwrap());
         assert!(lib.record_play(&one, 200).unwrap());
         assert!(lib.record_play(&three, 300).unwrap());
         assert!(!lib.record_play(&d.join("elsewhere.flac"), 1).unwrap());
+        let lib = lib;
         let view = |v| {
             titles(
                 lib.tracks(
@@ -1064,45 +1205,10 @@ mod tests {
         write(d, "drop_too_similar/01 c.flac", b"3");
         let mut lib = Library::open_in_memory().unwrap();
         scan(&mut lib, &[d.to_path_buf()], &FakeTags::new());
+        let d = canonicalize(d).unwrap();
         assert_eq!(lib.remove_folder(&d.join("drop/")).unwrap(), 1);
         assert_eq!(titles(lib.search("", 10).unwrap()), ["01 c", "01 a"]);
         assert!(d.join("drop/01 b.flac").exists(), "files stay");
-    }
-
-    #[test]
-    fn version_1_databases_are_upgraded() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("old.sqlite3");
-        {
-            let conn = Connection::open(&db).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE tracks (
-                    id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, size INTEGER NOT NULL,
-                    mtime INTEGER NOT NULL, title TEXT, artist TEXT, album TEXT,
-                    album_artist TEXT, genre TEXT, track INTEGER, disc INTEGER, year INTEGER,
-                    duration_ms INTEGER, codec TEXT, sample_rate INTEGER, channels INTEGER,
-                    bit_rate INTEGER);
-                 INSERT INTO tracks (path, size, mtime, title) VALUES ('/m/a.flac', 5, 1234, 'A');
-                 PRAGMA user_version = 1;",
-            )
-            .unwrap();
-        }
-        let lib = Library::open(&db).unwrap();
-        let t = lib.search("", 10).unwrap().remove(0);
-        assert_eq!(t.plays.added_at, Some(1234), "added when last modified");
-        assert_eq!(t.plays.play_count, 0);
-        assert!(lib.record_play(Path::new("/m/a.flac"), 99).unwrap());
-        assert_eq!(
-            lib.folder_summary(&Filter::default()).unwrap(),
-            vec![FolderSummary {
-                path: PathBuf::from("/m"),
-                tracks: 1
-            }],
-            "folders filled in for old rows"
-        );
-        drop(lib);
-        // Reopening an upgraded database does not migrate again.
-        Library::open(&db).unwrap();
     }
 
     #[test]
@@ -1162,15 +1268,100 @@ mod tests {
     }
 
     #[test]
-    fn reopening_keeps_data() {
+    fn reopening_keeps_tracks_plays_and_ids() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "m/01 a.flac", b"1");
-        let db = dir.path().join("lib.sqlite3");
-        {
-            let mut lib = Library::open(&db).unwrap();
+        write(dir.path(), "m/02 b.flac", b"2");
+        let file = dir.path().join("lib.json");
+        let a = canonicalize(dir.path()).unwrap().join("m/01 a.flac");
+        let ids = {
+            let mut lib = Library::open(&file).unwrap();
             scan(&mut lib, &[dir.path().join("m")], &FakeTags::new());
-        }
-        let lib = Library::open(&db).unwrap();
-        assert_eq!(lib.stats().unwrap().tracks, 1);
+            assert!(lib.record_play(&a, 42).unwrap());
+            assert!(lib.is_dirty(), "plays wait for the next save");
+            lib.save_if_dirty().unwrap();
+            assert!(!lib.is_dirty());
+            lib.search("", 10)
+                .unwrap()
+                .iter()
+                .map(|t| t.id)
+                .collect::<Vec<_>>()
+        };
+        let mut lib = Library::open(&file).unwrap();
+        assert_eq!(lib.stats().unwrap().tracks, 2);
+        let t = lib.search("01 a", 1).unwrap().remove(0);
+        assert_eq!((t.plays.play_count, t.plays.last_played), (1, Some(42)));
+        assert_eq!(t.tags.duration, Some(Duration::from_secs(100)));
+        assert_eq!(
+            lib.search("", 10)
+                .unwrap()
+                .iter()
+                .map(|t| t.id)
+                .collect::<Vec<_>>(),
+            ids,
+            "ids are stable"
+        );
+        // A rescan of unchanged files writes nothing.
+        let r = scan(&mut lib, &[dir.path().join("m")], &FakeTags::new());
+        assert_eq!(r.unchanged, 2);
+        assert!(!lib.is_dirty());
+        assert!(!dir.path().join("lib.json.tmp").exists());
+    }
+
+    #[test]
+    fn a_damaged_file_is_set_aside_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("library.json");
+        std::fs::write(&file, b"{ not json").unwrap();
+        let mut lib = Library::open(&file).unwrap();
+        assert_eq!(lib.stats().unwrap().tracks, 0);
+        let damaged = dir.path().join("library.json.damaged");
+        assert_eq!(std::fs::read(&damaged).unwrap(), b"{ not json");
+        lib.save().unwrap();
+        assert_eq!(std::fs::read(&damaged).unwrap(), b"{ not json", "kept");
+
+        std::fs::write(&file, br#"{"version":99,"next_id":1,"tracks":[]}"#).unwrap();
+        Library::open(&file).unwrap();
+        assert!(!file.exists(), "a newer format is set aside too");
+    }
+
+    #[test]
+    fn hand_edited_files_with_duplicates_or_bad_ids_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("library.json");
+        std::fs::write(
+            &file,
+            br#"{"version":1,"next_id":1,"tracks":[
+                {"id":5,"path":"/m/a.flac","size":1,"mtime":1,"title":"A","duration":1500},
+                {"id":5,"path":"/m/b.flac","size":1,"mtime":1},
+                {"id":0,"path":"/m/a.flac","size":1,"mtime":1}]}"#,
+        )
+        .unwrap();
+        let lib = Library::open(&file).unwrap();
+        let all = lib.tracks(&Filter::default(), 10).unwrap();
+        assert_eq!(all.len(), 2, "the duplicate path is dropped");
+        assert_ne!(all[0].id, all[1].id);
+        assert_eq!(all[0].tags.duration, Some(Duration::from_millis(1500)));
+    }
+
+    #[test]
+    fn plays_during_a_background_scan_survive_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        write(d, "A/01 one.flac", b"1");
+        let mut lib = Library::open_in_memory().unwrap();
+        scan(&mut lib, &[d.to_path_buf()], &FakeTags::new());
+        let one = canonicalize(d).unwrap().join("A/01 one.flac");
+        // The scan works from a snapshot while the player keeps counting plays.
+        write(d, "A/01 one.flac", b"changed");
+        write(d, "A/02 two.flac", b"2");
+        let snap = lib.snapshot();
+        assert!(lib.record_play(&one, 7).unwrap());
+        let changes = super::scan(&snap, &[d.to_path_buf()], &FakeTags::new(), &mut |_, _| {});
+        let r = lib.apply(changes);
+        assert_eq!((r.added, r.updated), (1, 1));
+        let t = lib.search("01 one", 1).unwrap().remove(0);
+        assert_eq!(t.plays.play_count, 1);
+        assert_eq!(t.size, 7);
     }
 }

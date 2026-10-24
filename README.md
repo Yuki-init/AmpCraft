@@ -118,7 +118,7 @@ sort, file info, options; **LIST** new, save (`.m3u8`) and load (`.m3u`, `.m3u8`
 The media library (Alt+L) has a Local Media tree (Audio, Most Played, Recently Added, Recently
 Played, Never Played), a search bar, Artist and Album filter panes (double-click one to play it)
 and a sortable track list. The Library button adds folders and rescans; `--rescan` rescans at
-start. Play counts are kept in the library database in the data folder, never on the music
+start. Play counts are kept in the library file (`library.json`) in the data folder, never on the music
 drive.
 
 | Key | Does |
@@ -142,7 +142,7 @@ drive.
 **Arch Linux**: `scripts/build-arch-package.sh` builds a release package in an Arch container,
 linked against Arch's own FFmpeg, into `dist/`. Install it with
 `sudo pacman -U dist/ampcraft-*.pkg.tar.zst`. It installs `ampcraft` to `/usr/bin`, a desktop
-entry and an icon. Config lives in `~/.config/ampcraft`, the library database in
+entry and an icon. Config lives in `~/.config/ampcraft`, the library (`library.json`) in
 `~/.local/share/ampcraft`. `packaging/arch/PKGBUILD` also works with plain `makepkg -si`.
 
 **Windows (in progress)**: builds are cross-compiled in the dev container with MinGW and tested

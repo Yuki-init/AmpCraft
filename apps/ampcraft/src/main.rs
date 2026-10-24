@@ -95,7 +95,7 @@ enum Output {
 /// Progress from the background library scan.
 enum ScanMsg {
     Progress(usize, usize),
-    Done(Result<ampcraft_library::ScanReport, String>),
+    Done(ampcraft_library::ScanChanges),
 }
 
 /// How files chosen in the dialog are used.
@@ -138,7 +138,6 @@ struct App {
     pl: PlaylistWindow,
     lib: LibraryWindow,
     library: Option<Library>,
-    db_path: PathBuf,
     config: Config,
     skin_path: Option<PathBuf>,
     playlist_file: PathBuf,
@@ -307,12 +306,18 @@ impl App {
                 let path = info.path.clone();
                 self.auto_load_eq(&path);
             }
-            if let (Some(lib), Some(info)) = (&self.library, status.info.as_deref()) {
+            if let (Some(lib), Some(info)) = (&mut self.library, status.info.as_deref()) {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs() as i64);
                 match lib.record_play(&info.path, now) {
-                    Ok(true) => self.lib_dirty = true,
+                    Ok(true) => {
+                        self.lib_dirty = true;
+                        // Save at once, so a play counts even if the player is killed.
+                        if let Err(e) = lib.save() {
+                            log::warn!("cannot save the library: {e}");
+                        }
+                    }
                     Ok(false) => {}
                     Err(e) => log::warn!("cannot record play: {e}"),
                 }
@@ -921,6 +926,11 @@ impl App {
     /// `quitting` also records where Play should resume.
     fn save_state(&mut self, quitting: bool) {
         self.last_save = Instant::now();
+        if let Some(lib) = &mut self.library
+            && let Err(e) = lib.save_if_dirty()
+        {
+            log::warn!("cannot save the library: {e}");
+        }
         let window = |panel: PanelId, size: Option<(i32, i32)>| {
             let w = self.wins.iter().find(|w| w.panel == panel)?;
             let r = self.layout.rect(panel)?;
@@ -1124,21 +1134,22 @@ impl App {
         }
         let (tx, rx) = mpsc::channel();
         let roots = self.config.library.roots(self.dirs.music.as_deref());
-        let db = self.db_path.clone();
+        let Some(snapshot) = self.library.as_ref().map(Library::snapshot) else {
+            self.lib.set_status("Library unavailable");
+            return;
+        };
         let spawned = std::thread::Builder::new()
             .name("library-scan".into())
             .spawn(move || {
                 let progress = tx.clone();
-                let result = Library::open(&db)
-                    .and_then(|mut lib| {
-                        lib.scan(&roots, &ampcraft_library::FfmpegTags, &mut |done, total| {
-                            if done % 10 == 0 || done == total {
-                                let _ = progress.send(ScanMsg::Progress(done, total));
-                            }
-                        })
-                    })
-                    .map_err(|e| e.to_string());
-                let _ = tx.send(ScanMsg::Done(result));
+                let tags = ampcraft_library::FfmpegTags;
+                let changes =
+                    ampcraft_library::scan(&snapshot, &roots, &tags, &mut |done, total| {
+                        if done % 10 == 0 || done == total {
+                            let _ = progress.send(ScanMsg::Progress(done, total));
+                        }
+                    });
+                let _ = tx.send(ScanMsg::Done(changes));
             });
         match spawned {
             Ok(_) => {
@@ -1164,20 +1175,23 @@ impl App {
         if let Some(s) = status {
             self.lib.set_status(s);
         }
-        let Some(result) = finished else {
+        let Some(changes) = finished else {
             return Ok(());
         };
         self.scan = None;
-        self.refresh_library();
-        match result {
-            Ok(r) => log::info!(
+        if let Some(lib) = &mut self.library {
+            let r = lib.apply(changes);
+            log::info!(
                 "library scan: {} new, {} updated, {} removed",
                 r.added,
                 r.updated,
                 r.removed
-            ),
-            Err(e) => self.lib.set_status(format!("Scan failed: {e}")),
+            );
+            if let Err(e) = lib.save_if_dirty() {
+                log::warn!("cannot save the library: {e}");
+            }
         }
+        self.refresh_library();
         let q = self.lib.query();
         self.act_lib(q)
     }
@@ -1776,8 +1790,7 @@ fn main() -> Result<()> {
         preamp_db: config.equalizer.preamp_db,
         bands_db: config.equalizer.bands_db,
     });
-    let db_path = dirs.data.join("library.sqlite3");
-    let library = match Library::open(&db_path) {
+    let library = match Library::open(&dirs.data.join("library.json")) {
         Ok(l) => Some(l),
         Err(e) => {
             log::warn!("library unavailable: {e}");
@@ -1984,7 +1997,6 @@ fn main() -> Result<()> {
         pl,
         lib: lib_win,
         library,
-        db_path,
         config,
         skin_path: skin_path.map(|p| {
             // Theme names stay names; files and folders are stored absolute.

@@ -72,7 +72,7 @@ fn scan_sample_of_real_library() {
         .collect();
 
     let db_dir = tempfile::tempdir().unwrap();
-    let mut lib = Library::open(&db_dir.path().join("library.sqlite3")).unwrap();
+    let mut lib = Library::open(&db_dir.path().join("library.json")).unwrap();
     let started = Instant::now();
     let first = lib.scan(&roots, &FfmpegTags, &mut |_, _| {}).unwrap();
     let first_time = started.elapsed();

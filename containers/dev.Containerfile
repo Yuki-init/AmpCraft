@@ -13,7 +13,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev libxext-dev \
         libxcursor-dev libxi-dev libxcb-shape0-dev libxcb-render0-dev libxcb-xfixes0-dev \
         xvfb xauth openbox xdotool x11-utils imagemagick \
-        libsqlite3-dev \
         fontconfig fonts-dejavu-core fonts-noto-cjk dbus-daemon \
         gcc-mingw-w64-x86-64 unzip \
     && rm -rf /var/lib/apt/lists/*
