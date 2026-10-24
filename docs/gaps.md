@@ -20,7 +20,8 @@ platform (Wayland cannot place windows; see the Omarchy fork's Hyprland approach
 
 `unsafe_code` is denied workspace-wide, but `crates/platform/src/win32.rs`,
 `apps/ampcraft/src/dialog/win32.rs`, the Windows parts of `crates/platform/src/dirs.rs` and
-`apps/ampcraft/src/appearance.rs` opt out for Win32 FFI. G1 removes most of it; the rest should
+`apps/ampcraft/src/appearance.rs`, and one call in `apps/ampcraft/src/media_controls/smtc.rs`
+opt out for Win32 FFI. G1 removes most of it; the rest should
 move to safe wrapper crates.
 
 ## G3. No command layer, control channel or MCP
@@ -33,9 +34,11 @@ dropped in the fork.
 Plan: an `ampcraft-engine` crate with the player session and commands (`playback.play`,
 `playlist.add`, `theme.set`...), then a control channel and MCP on top.
 
-## G4. Windows is unfinished
+## G4. Windows media controls unchecked on real Windows
 
-File dialogs, message boxes and media keys are missing on Windows.
+Media keys and the media flyout use the System Media Transport Controls
+(`apps/ampcraft/src/media_controls/smtc.rs`). Wine lacks their button events, so only startup
+and the pure parts are tested here; the Windows test kit asks for a check by hand.
 
 ## G5. Suite infrastructure not yet adopted
 

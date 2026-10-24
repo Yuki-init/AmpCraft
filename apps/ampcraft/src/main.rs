@@ -154,11 +154,10 @@ struct App {
     entries_dirty: bool,
     /// Desktop color changes, applied while the System theme is in use.
     appearance: ampcraft::appearance::Watcher,
-    #[cfg(target_os = "linux")]
-    mpris: Option<ampcraft::mpris::Mpris>,
-    /// Last position reported over MPRIS and when, to detect jumps.
-    #[cfg(target_os = "linux")]
-    mpris_position: (Option<TrackId>, Duration, Instant),
+    /// The desktop's media keys and now-playing panel (MPRIS, or SMTC on Windows).
+    media: Option<ampcraft::media_controls::MediaControls>,
+    /// Last position reported to the media controls and when, to detect jumps.
+    media_position: (Option<TrackId>, Duration, Instant),
     /// Paths of the rows shown in the library window, by library id.
     lib_paths: HashMap<i64, PathBuf>,
     /// The track whose play was last counted, and whether the library window should
@@ -996,14 +995,13 @@ impl App {
         }
     }
 
-    /// Carries out MPRIS commands and publishes the current state.
-    #[cfg(target_os = "linux")]
-    fn sync_mpris(&mut self) -> Result<()> {
-        use ampcraft::mpris::{MprisCommand as C, MprisState, Status};
-        let Some(mpris) = &self.mpris else {
+    /// Carries out media control commands and publishes the current state.
+    fn sync_media(&mut self) -> Result<()> {
+        use ampcraft::media_controls::{Command as C, State, Status};
+        let Some(media) = &self.media else {
             return Ok(());
         };
-        let commands = mpris.commands();
+        let commands = media.commands();
         for c in commands {
             let status = self.last_status.clone();
             match c {
@@ -1064,7 +1062,7 @@ impl App {
         let status = &self.last_status;
         let info = status.info.as_deref();
         let now = Instant::now();
-        let (last_track, last_pos, last_at) = self.mpris_position;
+        let (last_track, last_pos, last_at) = self.media_position;
         let expected = if status.state == PlaybackState::Playing {
             last_pos + now.duration_since(last_at)
         } else {
@@ -1074,9 +1072,9 @@ impl App {
         let seeked = status.track == last_track
             && status.state != PlaybackState::Stopped
             && drift > Duration::from_millis(1500);
-        self.mpris_position = (status.track, status.position, now);
+        self.media_position = (status.track, status.position, now);
         let meta = status.track.and_then(|id| self.meta.get(&id));
-        let state = MprisState {
+        let state = State {
             status: match status.state {
                 PlaybackState::Playing => Status::Playing,
                 PlaybackState::Paused => Status::Paused,
@@ -1095,8 +1093,8 @@ impl App {
             shuffle: self.main.shuffle(),
             repeat: self.main.repeat(),
         };
-        if let Some(mpris) = &self.mpris {
-            mpris.update(state, seeked);
+        if let Some(media) = &mut self.media {
+            media.update(state, seeked);
         }
         Ok(())
     }
@@ -1657,8 +1655,7 @@ impl App {
                 let q = self.lib.query();
                 self.act_lib(q)?;
             }
-            #[cfg(target_os = "linux")]
-            self.sync_mpris()?;
+            self.sync_media()?;
             if self.last_save.elapsed() > Duration::from_secs(30) {
                 self.save_state(false);
             }
@@ -1956,9 +1953,20 @@ fn main() -> Result<()> {
     }
     pl.focused = false;
     #[cfg(windows)]
-    if let Some(hwnd) = wins.first().and_then(|w| platform.hwnd(w.id)) {
+    let main_window = wins.first().and_then(|w| platform.hwnd(w.id));
+    #[cfg(not(windows))]
+    let main_window = None;
+    #[cfg(windows)]
+    if let Some(hwnd) = main_window {
         ampcraft::dialog::set_owner(hwnd);
     }
+    let media = match ampcraft::media_controls::MediaControls::start(main_window) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            log::info!("media controls unavailable: {e}");
+            None
+        }
+    };
 
     let shown = |panel: PanelId| wins.iter().any(|w| w.panel == panel && w.visible);
     let mut main = MainWindow::new();
@@ -2018,16 +2026,8 @@ fn main() -> Result<()> {
         queue_version: u64::MAX,
         entries_dirty: true,
         appearance: ampcraft::appearance::Watcher::start(),
-        #[cfg(target_os = "linux")]
-        mpris: match ampcraft::mpris::Mpris::start() {
-            Ok(m) => Some(m),
-            Err(e) => {
-                log::info!("MPRIS unavailable (no session bus?): {e}");
-                None
-            }
-        },
-        #[cfg(target_os = "linux")]
-        mpris_position: (None, Duration::ZERO, Instant::now()),
+        media,
+        media_position: (None, Duration::ZERO, Instant::now()),
         lib_paths: HashMap::new(),
         scan: None,
         folder_picks: mpsc::channel(),

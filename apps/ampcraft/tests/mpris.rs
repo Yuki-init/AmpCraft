@@ -12,7 +12,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use ampcraft::mpris::{Mpris, MprisCommand, MprisState, Status, track_path};
+use ampcraft::media_controls::mpris::{Mpris, track_path};
+use ampcraft::media_controls::{Command, State, Status};
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{ObjectPath, OwnedValue};
 
@@ -37,7 +38,7 @@ fn service_name(conn: &Connection) -> String {
         .expect("service registered")
 }
 
-fn wait_commands(mpris: &Mpris, n: usize) -> Vec<MprisCommand> {
+fn wait_commands(mpris: &Mpris, n: usize) -> Vec<Command> {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut got = Vec::new();
     while got.len() < n {
@@ -67,17 +68,17 @@ fn remote_calls_become_commands_and_state_is_readable() {
     assert_eq!(
         wait_commands(&mpris, 6),
         vec![
-            MprisCommand::PlayPause,
-            MprisCommand::Next,
-            MprisCommand::Seek(5_000_000),
-            MprisCommand::SetPosition(3, 42_000_000),
-            MprisCommand::SetVolume(0.25),
-            MprisCommand::SetShuffle(true),
+            Command::PlayPause,
+            Command::Next,
+            Command::Seek(5_000_000),
+            Command::SetPosition(3, 42_000_000),
+            Command::SetVolume(0.25),
+            Command::SetShuffle(true),
         ]
     );
 
     mpris.update(
-        MprisState {
+        State {
             status: Status::Playing,
             track_id: Some(3),
             title: Some("God Knows".into()),
@@ -85,7 +86,7 @@ fn remote_calls_become_commands_and_state_is_readable() {
             length_us: Some(230_000_000),
             position_us: 12_000_000,
             volume: 0.25,
-            ..MprisState::default()
+            ..State::default()
         },
         true,
     );

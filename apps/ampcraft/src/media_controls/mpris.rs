@@ -1,7 +1,7 @@
 //! MPRIS (`org.mpris.MediaPlayer2`) on the D-Bus session bus, so desktop media keys, panel
 //! widgets and tools like `playerctl` can control the player.
 //!
-//! D-Bus method calls become [`MprisCommand`]s on a channel that the UI loop drains. The app
+//! D-Bus method calls become [`Command`]s on a channel that the UI loop drains. The app
 //! pushes its state with [`Mpris::update`]; only properties that changed are signalled.
 
 use std::collections::HashMap;
@@ -12,63 +12,18 @@ use zbus::blocking::Connection;
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
+use crate::media_controls::{Command, State, Status};
+
 const PATH: &str = "/org/mpris/MediaPlayer2";
 const NAME: &str = "org.mpris.MediaPlayer2.ampcraft";
 
-/// What a remote client asked for.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum MprisCommand {
-    Play,
-    Pause,
-    PlayPause,
-    Stop,
-    Next,
-    Previous,
-    /// Relative seek in microseconds.
-    Seek(i64),
-    /// Absolute position in microseconds, for the given track id.
-    SetPosition(u64, i64),
-    /// 0.0 to 1.0.
-    SetVolume(f64),
-    SetShuffle(bool),
-    /// True for any loop mode other than None.
-    SetLoop(bool),
-    Raise,
-    Quit,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Status {
-    Playing,
-    Paused,
-    #[default]
-    Stopped,
-}
-
-impl Status {
-    fn as_str(self) -> &'static str {
-        match self {
-            Status::Playing => "Playing",
-            Status::Paused => "Paused",
-            Status::Stopped => "Stopped",
-        }
+/// The `PlaybackStatus` property value for a status.
+fn status_str(status: Status) -> &'static str {
+    match status {
+        Status::Playing => "Playing",
+        Status::Paused => "Paused",
+        Status::Stopped => "Stopped",
     }
-}
-
-/// The player state exposed over MPRIS.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct MprisState {
-    pub status: Status,
-    /// Queue id of the current track, if any.
-    pub track_id: Option<u64>,
-    pub title: Option<String>,
-    pub artist: Option<String>,
-    pub album: Option<String>,
-    pub length_us: Option<i64>,
-    pub position_us: i64,
-    pub volume: f64,
-    pub shuffle: bool,
-    pub repeat: bool,
 }
 
 /// Object path naming a track in MPRIS metadata.
@@ -82,7 +37,7 @@ pub fn track_id_from_path(path: &str) -> Option<u64> {
 }
 
 /// The `Metadata` dictionary for a state.
-pub fn metadata(state: &MprisState) -> HashMap<String, OwnedValue> {
+pub fn metadata(state: &State) -> HashMap<String, OwnedValue> {
     let mut m = HashMap::new();
     let mut put = |k: &str, v: Value<'_>| {
         if let Ok(owned) = v.try_to_owned() {
@@ -112,17 +67,17 @@ pub fn metadata(state: &MprisState) -> HashMap<String, OwnedValue> {
 }
 
 struct Root {
-    commands: Sender<MprisCommand>,
+    commands: Sender<Command>,
 }
 
 #[zbus::interface(name = "org.mpris.MediaPlayer2")]
 impl Root {
     fn raise(&self) {
-        let _ = self.commands.send(MprisCommand::Raise);
+        let _ = self.commands.send(Command::Raise);
     }
 
     fn quit(&self) {
-        let _ = self.commands.send(MprisCommand::Quit);
+        let _ = self.commands.send(Command::Quit);
     }
 
     #[zbus(property)]
@@ -172,19 +127,19 @@ impl Root {
 }
 
 struct PlayerIface {
-    commands: Sender<MprisCommand>,
-    state: Arc<Mutex<MprisState>>,
+    commands: Sender<Command>,
+    state: Arc<Mutex<State>>,
 }
 
 impl PlayerIface {
-    fn state(&self) -> MprisState {
+    fn state(&self) -> State {
         self.state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
 
-    fn send(&self, c: MprisCommand) {
+    fn send(&self, c: Command) {
         let _ = self.commands.send(c);
     }
 }
@@ -192,36 +147,36 @@ impl PlayerIface {
 #[zbus::interface(name = "org.mpris.MediaPlayer2.Player")]
 impl PlayerIface {
     fn play(&self) {
-        self.send(MprisCommand::Play);
+        self.send(Command::Play);
     }
 
     fn pause(&self) {
-        self.send(MprisCommand::Pause);
+        self.send(Command::Pause);
     }
 
     fn play_pause(&self) {
-        self.send(MprisCommand::PlayPause);
+        self.send(Command::PlayPause);
     }
 
     fn stop(&self) {
-        self.send(MprisCommand::Stop);
+        self.send(Command::Stop);
     }
 
     fn next(&self) {
-        self.send(MprisCommand::Next);
+        self.send(Command::Next);
     }
 
     fn previous(&self) {
-        self.send(MprisCommand::Previous);
+        self.send(Command::Previous);
     }
 
     fn seek(&self, offset: i64) {
-        self.send(MprisCommand::Seek(offset));
+        self.send(Command::Seek(offset));
     }
 
     fn set_position(&self, track: ObjectPath<'_>, position: i64) {
         if let Some(id) = track_id_from_path(track.as_str()) {
-            self.send(MprisCommand::SetPosition(id, position));
+            self.send(Command::SetPosition(id, position));
         }
     }
 
@@ -232,7 +187,7 @@ impl PlayerIface {
 
     #[zbus(property)]
     fn playback_status(&self) -> String {
-        self.state().status.as_str().into()
+        status_str(self.state().status).into()
     }
 
     #[zbus(property)]
@@ -247,7 +202,7 @@ impl PlayerIface {
 
     #[zbus(property)]
     fn set_loop_status(&self, value: String) {
-        self.send(MprisCommand::SetLoop(value != "None"));
+        self.send(Command::SetLoop(value != "None"));
     }
 
     #[zbus(property)]
@@ -257,7 +212,7 @@ impl PlayerIface {
 
     #[zbus(property)]
     fn set_shuffle(&self, value: bool) {
-        self.send(MprisCommand::SetShuffle(value));
+        self.send(Command::SetShuffle(value));
     }
 
     #[zbus(property)]
@@ -272,7 +227,7 @@ impl PlayerIface {
 
     #[zbus(property)]
     fn set_volume(&self, value: f64) {
-        self.send(MprisCommand::SetVolume(value.clamp(0.0, 1.0)));
+        self.send(Command::SetVolume(value.clamp(0.0, 1.0)));
     }
 
     #[zbus(property(emits_changed_signal = "false"))]
@@ -329,8 +284,8 @@ impl PlayerIface {
 /// A running MPRIS service.
 pub struct Mpris {
     conn: Connection,
-    state: Arc<Mutex<MprisState>>,
-    commands: Receiver<MprisCommand>,
+    state: Arc<Mutex<State>>,
+    commands: Receiver<Command>,
 }
 
 impl std::fmt::Debug for Mpris {
@@ -344,9 +299,9 @@ impl Mpris {
     /// name, a per-process name is used, as the MPRIS spec allows.
     pub fn start() -> zbus::Result<Self> {
         let (tx, commands) = mpsc::channel();
-        let state = Arc::new(Mutex::new(MprisState {
+        let state = Arc::new(Mutex::new(State {
             volume: 1.0,
-            ..MprisState::default()
+            ..State::default()
         }));
         let conn = zbus::blocking::connection::Builder::session()?
             .serve_at(
@@ -374,13 +329,13 @@ impl Mpris {
     }
 
     /// Commands received since the last call.
-    pub fn commands(&self) -> Vec<MprisCommand> {
+    pub fn commands(&self) -> Vec<Command> {
         self.commands.try_iter().collect()
     }
 
     /// Publishes new state, signalling the properties that changed. `seeked` reports a jump
     /// in position (seek or track restart) so clients resync their progress bars.
-    pub fn update(&self, new: MprisState, seeked: bool) {
+    pub fn update(&self, new: State, seeked: bool) {
         let old = {
             let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             std::mem::replace(&mut *s, new.clone())
@@ -444,13 +399,13 @@ mod tests {
 
     #[test]
     fn metadata_has_spec_keys_and_types() {
-        let state = MprisState {
+        let state = State {
             track_id: Some(7),
             title: Some("ハレ晴レユカイ".into()),
             artist: Some("Ma15".into()),
             album: Some("Best".into()),
             length_us: Some(225_000_000),
-            ..MprisState::default()
+            ..State::default()
         };
         let m = metadata(&state);
         assert_eq!(
@@ -467,7 +422,7 @@ mod tests {
         );
         let artists: Vec<String> = m["xesam:artist"].try_clone().unwrap().try_into().unwrap();
         assert_eq!(artists, vec!["Ma15".to_owned()]);
-        let empty = metadata(&MprisState::default());
+        let empty = metadata(&State::default());
         assert!(
             empty.contains_key("mpris:trackid"),
             "NoTrack path when nothing is loaded"

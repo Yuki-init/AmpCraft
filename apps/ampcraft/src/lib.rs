@@ -9,9 +9,8 @@ pub mod files;
 pub mod info;
 pub mod layout;
 pub mod logging;
+pub mod media_controls;
 pub mod metadata;
-#[cfg(target_os = "linux")]
-pub mod mpris;
 pub mod null_sink;
 pub mod perf;
 pub mod skins;

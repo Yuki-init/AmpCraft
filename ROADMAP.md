@@ -12,14 +12,15 @@ Status: 2026-10-24.
 | Playback (decode, seek, gapless, queue) | Works, through FFmpeg |
 | Main window, playlist, equalizer, docking | Works |
 | Skins: `.wsz`, built-in themes, System theme | Works |
-| Media library, playlists, MPRIS | Works on Linux |
-| Windows | Runs; file dialogs, message boxes and media keys missing |
+| Media library, playlists | Works |
+| Media keys and now-playing controls | MPRIS on Linux, media flyout on Windows |
+| Windows | Works; needs more testing on real machines |
 | macOS | Not started |
 | Crafting Apps standards | Layout, licensing, lints and gate done; see `docs/gaps.md` |
 
 ## Next
 
-1. Finish Windows: file dialogs, message boxes, media keys (`docs/gaps.md` G4).
+1. Check the Windows media controls on a real machine (`docs/gaps.md` G4).
 2. Move window and UI code onto egui and winit, removing the X11 and Win32 backends and the
    last `unsafe` (G1, G2).
 3. Commands for every action, a JSON control channel and an MCP server (G3).
@@ -36,3 +37,6 @@ Status: 2026-10-24.
 - 2026-10-24: FFmpeg stays as the decoder by choice; removed from the gaps list.
 - 2026-10-24: The library is a JSON file (`library.json`) instead of SQLite: no C dependency,
   atomic saves, plays saved at once, damaged files set aside.
+- 2026-10-24: Media keys and the media flyout on Windows (System Media Transport Controls),
+  behind one media controls interface shared with MPRIS. Windows file dialogs and message
+  boxes were already done; the gaps list was out of date.

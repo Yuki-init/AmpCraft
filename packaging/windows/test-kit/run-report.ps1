@@ -296,6 +296,13 @@ $main = $wins | Sort-Object { $_.y } | Select-Object -First 1
 Add-Result 'scale 2 main window is 550x232' ($main -and $main.w -eq 550 -and $main.h -eq 232) $(if ($main) { "$($main.w)x$($main.h)" } else { 'no window' })
 Stop-Player
 
+# The media controls (media keys and the Windows media flyout) start with the player; the
+# log says so when they cannot.
+$log = Get-ChildItem (Join-Path $Report 'player-*.log') | Sort-Object LastWriteTime | Select-Object -Last 1
+$lines = if ($log) { @(Select-String -Path $log.FullName -SimpleMatch 'media controls' | ForEach-Object { $_.Line }) } else { @() }
+$unavailable = @($lines | Where-Object { $_ -match 'unavailable|failed' })
+Add-Result 'media controls start (media keys, flyout)' ([bool]$log -and $unavailable.Count -eq 0) ($lines -join '; ')
+
 $results = $script:Results
 $results | ConvertTo-Json | Set-Content (Join-Path $Report 'results.json')
 $failed = ($results | Where-Object { -not $_.ok }).Count
