@@ -1,8 +1,8 @@
 AmpCraft for Windows (early test build)
 ======================================
 
-A reimplementation of a classic skinnable music player. This is an early build: the player
-runs, but some parts (file dialogs, message boxes, media keys) are not done on Windows yet.
+A reimplementation of a classic skinnable music player. This is an early build: everything
+works, but it has had little testing on real Windows machines yet.
 
 Running
 -------

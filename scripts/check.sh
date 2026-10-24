@@ -17,8 +17,8 @@ echo "==> Windows platform tests (Win32 backend under Wine)"
 scripts/test-windows.sh -p ampcraft-platform
 
 if [[ -f .cache/ffmpeg-win64/include/libavcodec/avcodec.h ]]; then
-    echo "==> Windows dialog tests (under Wine)"
-    scripts/test-windows.sh -p ampcraft --lib dialog
+    echo "==> Windows dialog and media control tests (under Wine)"
+    scripts/test-windows.sh -p ampcraft --lib -- dialog media_controls
 
     echo "==> Windows build"
     scripts/build-windows.sh --debug >/dev/null

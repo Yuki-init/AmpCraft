@@ -5,8 +5,8 @@ Status: 2026-10-24. How AmpCraft is built today, and where it is heading.
 ## Workspace
 
 ```
-apps/ampcraft/        the desktop player: arguments, config, menus, preferences, MPRIS,
-                      the System theme (appearance.rs), wiring
+apps/ampcraft/        the desktop player: arguments, config, menus, preferences, media
+                      controls, the System theme (appearance.rs), wiring
 crates/core/          playback engine: demux, decode (FFmpeg), resample, queue, seek, gapless
 crates/audio-out/     cpal output, lock-free ring buffer, volume and balance
 crates/dsp/           10-band equalizer, preamp, spectrum and oscilloscope taps
@@ -49,7 +49,10 @@ added time, play count, last played). Saves write a temporary file and rename it
 never leaves a half-written library; a play is saved as soon as it is counted. A file that
 cannot be read is renamed to `library.json.damaged` and never overwritten. With 50,000 tracks
 (a 19 MB file) it opens in about 70 ms, saves in about 50 ms, and a search takes about 1 ms.
-- **MPRIS** (Linux): D-Bus object server; commands reach the UI thread on a channel.
+- **Media controls** (`media_controls/`): one interface over MPRIS (a D-Bus object server on
+  Linux) and the System Media Transport Controls (Windows' media flyout and media keys, tied
+  to the main window). Requests reach the UI thread as commands on a channel; the UI thread
+  publishes its state each frame and only changes are passed on.
 - **Appearance**: watches the desktop's colors (portal signals and `kdeglobals` on Linux, the
   registry on Windows), debounces bursts, and sends new readings to the UI thread.
 

@@ -52,9 +52,10 @@ ampcraft-<version>-<release>-windows-x64\
      tall or more), the equalizer (same width, 116 high at 1x) and the
      playlist (same width, at least 116 high at 1x). No window frames, title bars or
      shadows from Windows; the skin draws its own title bars.
-   - The default skin is a generated dark theme (Dracula colors): purple, pink and grey
-     on near-black, with a pixel font. Nothing should be black, garbled, offset,
-     stretched or blurry; at 2x every pixel is a sharp 2x2 block.
+   - The default skin is the System theme, drawn in code from Windows' own colors: light
+     or dark to match the "app mode" in Settings > Personalization > Colors, with the
+     accent color for highlights, and a pixel font. Nothing should be black, garbled,
+     offset, stretched or blurry; at 2x every pixel is a sharp 2x2 block.
    - `02-dragged`: all three windows moved together by the same amount as the drag.
    - `03-menu`: a small menu next to the main window, drawn in the skin's colors.
    - `04-scale2-with-track`: double size; the main window shows a track title (tone)
@@ -82,6 +83,19 @@ ampcraft-<version>-<release>-windows-x64\
    look and move there.
 
    Changed since the last report, please check by hand:
+   - Media keys and the media flyout. Start the player with a track
+     (`Start-Player @('--audio', 'null', "$Sandbox\music\tone.wav")`, or a longer file the
+     owner points you to) and press the keyboard's media keys, or send them with
+     `Send-Keys @(0xB3)` (play/pause), `0xB2` (stop), `0xB0` (next), `0xB1` (previous).
+     The player should react while another window has focus. Turning the volume up or
+     down with the keyboard (or `Send-Keys @(0xAF)`) shows Windows' media flyout: it
+     should name AmpCraft's track, and its play/pause, next and previous buttons should
+     work. On Windows 11 the flyout's progress bar, shuffle and repeat should match the
+     player. Take a screenshot of the flyout.
+   - The System theme: switch Windows between light and dark app mode, and change the
+     accent color, while the player runs. It should follow within a few seconds.
+
+   From the previous report, quick look only:
    - While any dialog is open (Eject, playlist ADD > FILE or DIR, EQ PRESETS save/load to
      file, Preferences "Load skin...", File info with Alt+3, the EQ preset name prompt),
      clicks on the main window, equalizer, playlist and any other player window should do
@@ -89,13 +103,9 @@ ampcraft-<version>-<release>-windows-x64\
      all of them should work again.
    - Every one of those dialogs, File info included, should open centred over the player's
      windows (moved inside the screen if it would stick out), not in the screen's middle or
-     at the main window's corner. Try it with the player in a couple of places, including
-     the second monitor if there is one.
-   - Still fine from last time (quick look only): Japanese titles, the modern folder
-     pickers and their captions, `--scale 3` staying docked and on screen, Escape closing
-     the EQ PRESETS submenu.
-
-   Known gap: media keys are not wired on Windows.
+     at the main window's corner.
+   - Japanese titles, the modern folder pickers and their captions, `--scale 3` staying
+     docked and on screen, Escape closing the EQ PRESETS submenu.
 
 5. Write `report\REPORT.md`:
    - Environment: Windows version, display scale(s), monitors, sound device (from

@@ -55,6 +55,14 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# The System Media Transport Controls (media keys and the media flyout); already in the
+# build through cpal.
+windows = { version = "0.62.2", features = [
+    "Foundation",
+    "Media",
+    "Win32_Foundation",
+    "Win32_System_WinRT",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5.19.0", default-features = false, features = ["blocking-api", "async-io"] }

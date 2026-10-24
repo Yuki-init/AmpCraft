@@ -50,7 +50,8 @@ AmpCraft is in early development (see the [roadmap](ROADMAP.md)). Today it can:
   per track, and `.eqf` import and export.
 - **Organize**: a media library with Artist and Album filters, search, Most Played, Recently
   Added and Never Played; `.m3u`, `.m3u8` and `.pls` playlists.
-- **Fit in**: MPRIS and media keys on Linux, settings that save themselves.
+- **Fit in**: media keys and the desktop's now-playing controls (MPRIS on Linux, the media
+  flyout on Windows), settings that save themselves.
 
 ## Getting started
 
@@ -146,8 +147,8 @@ entry and an icon. Config lives in `~/.config/ampcraft`, the library (`library.j
 `~/.local/share/ampcraft`. `packaging/arch/PKGBUILD` also works with plain `makepkg -si`.
 
 **Windows (in progress)**: builds are cross-compiled in the dev container with MinGW and tested
-under Wine. The player uses its own Win32 window backend; file dialogs, message boxes and media
-keys are not done on Windows yet.
+under Wine. The player uses its own Win32 window backend, the system's file dialogs and the
+media flyout (media keys). It has had a few test runs on real Windows so far.
 
 ```sh
 scripts/fetch-ffmpeg-windows.sh   # pinned LGPL FFmpeg build for Windows, into .cache/ (networked)
